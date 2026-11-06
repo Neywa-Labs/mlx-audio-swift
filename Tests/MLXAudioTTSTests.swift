@@ -1486,6 +1486,28 @@ struct SopranoTextCleaningTests {
         #expect(cleanTextForSoprano("It costs $3.50 today.") == "it costs three dollars, fifty cents today.")
         #expect(cleanTextForSoprano("I have 5 cats") == "i have five cats")
     }
+
+    @Test func timesAreSpoken() {
+        #expect(cleanTextForSoprano("Meet at 3:30 tomorrow.") == "meet at three thirty tomorrow.")
+        #expect(cleanTextForSoprano("At 9:05 we eat.") == "at nine oh five we eat.")
+        #expect(cleanTextForSoprano("At 3:00 we eat.") == "at three o'clock we eat.")
+        #expect(cleanTextForSoprano("It is 14:00 now.") == "it is fourteen hundred now.")
+        #expect(cleanTextForSoprano("It took 1:05:09 total.") == "it took one oh five oh nine total.")
+    }
+
+    @Test func fractionalSecondsAreSpoken() {
+        let cases = [
+            "1:00:00.5": "one oh oh zero point five",
+            "1:05:00.5": "one oh five zero point five",
+            "00:00:00.5": "zero oh oh zero point five",
+            "1:05:01.5": "one oh five oh one point five",
+            "1:05:10.5": "one oh five ten point five",
+            "1:05:00": "one oh five",
+        ]
+        for (timestamp, expected) in cases {
+            #expect(cleanTextForSoprano("It took \(timestamp) total.") == "it took \(expected) total.")
+        }
+    }
 }
 
 struct EchoTTSTests {
