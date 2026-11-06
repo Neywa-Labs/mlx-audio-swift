@@ -33,6 +33,7 @@ struct LongCatTests {
         let actual = positions.map { LongCatT5Attention.relativeBucket($0, buckets: 32, maxDistance: 128) }
         #expect(actual == [15, 15, 10, 8, 7, 1, 0, 17, 23, 24, 26, 31])
         #expect(LongCatModel.normalizedText("  Hello, ‘WORLD’!\n") == "hello, world !")
+        #expect(LongCatModel.normalizedText("He said “Hi” and \"bye\".") == "he said hi and bye .")
         #expect(abs(LongCatModel.approximateDuration("你好!", maximum: 30) - 0.63) < 1e-6)
         let promptTime = Double(12 * 2048) / 24000
         let ratio = promptTime / LongCatModel.approximateDuration("Hello, this is", maximum: 30)

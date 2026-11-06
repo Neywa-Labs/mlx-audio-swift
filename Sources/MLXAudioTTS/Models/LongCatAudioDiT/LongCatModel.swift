@@ -39,7 +39,7 @@ public final class LongCatModel: Module, SpeechGenerationModel, @unchecked Senda
     }
 
     static func normalizedText(_ text: String) -> String {
-        text.lowercased().replacingOccurrences(of: "[\"‘’]", with: " ", options: .regularExpression)
+        text.lowercased().replacingOccurrences(of: "[\"“”‘’]", with: " ", options: .regularExpression)
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
