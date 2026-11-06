@@ -170,7 +170,7 @@ enum Zonos2Text {
         text = replace(
             text,
             pattern:
-                #"(?<!\w)(?<hour>[01]?\d|2[0-3]):(?<minute>[0-5]\d)(?::(?<second>[0-5]\d))?\s*(?<suffix>[aApP]\.?\s?[mM]\.?)?\b"#,
+                #"(?<!\w)(?<hour>[01]?\d|2[0-3]):(?<minute>[0-5]\d)(?::(?<second>[0-5]\d))?(?:\s*(?<suffix>[aApP]\.?\s?[mM]\.?))?\b"#,
             insensitive: false
         ) { m in
             {

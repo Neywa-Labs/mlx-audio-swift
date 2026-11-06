@@ -231,6 +231,12 @@ struct Zonos2Tests {
         #expect(Zonos2Text.normalize("$5 mega", language: "en") == "five dollars mega")
         #expect(Zonos2Text.normalize("$5M", language: "en") == "five million dollars")
     }
+    @Test func bareTimeKeepsSpaceBeforeNextWord() {
+        #expect(Zonos2Text.normalize("Meet at 3:30 tomorrow.", language: "en") == "Meet at three thirty tomorrow.")
+        #expect(Zonos2Text.normalize("9:05 and later", language: "en") == "nine oh five and later")
+        #expect(Zonos2Text.normalize("14:00 sharp", language: "en") == "fourteen sharp")
+        #expect(Zonos2Text.normalize("3:30 pm today", language: "en") == "three thirty p m today")
+    }
     @Test func speakerFrontendMatchesPython() throws {
         try Device.withDefaultDevice(.cpu) {
             let waveform = ((MLXArray(0..<2048) % 64).asType(.float32) - 32) / 64
