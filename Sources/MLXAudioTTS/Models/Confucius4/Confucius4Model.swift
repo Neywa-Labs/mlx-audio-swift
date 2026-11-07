@@ -73,6 +73,15 @@ public final class Confucius4Model: SpeechGenerationModel, @unchecked Sendable {
         let token = languageTokens[language ?? "vi"] ?? languageTokens["en"]!
         return "You are a helpful assistant. \(token):\(text)"
     }
+    static func promptIDs(_ tokenizer: any Tokenizer, text: String, language: String?) -> [Int] {
+        var ids = tokenizer.encode(text: prompt(text: text, language: language), addSpecialTokens: true)
+        if let eos = tokenizer.eosTokenId { ids.append(eos) }
+        return ids
+    }
+    static func tokenizer(data: Config) throws -> any Tokenizer {
+        try PreTrainedTokenizer(tokenizerConfig: ["tokenizer_class": "LlamaTokenizer", "bos_token": "<s>",
+            "eos_token": "</s>", "unk_token": "<unk>", "add_bos_token": true, "add_eos_token": false], tokenizerData: data)
+    }
     func run(text: String, reference: MLXArray?, language: String?, parameters p: GenerateParameters,
              options: Confucius4GenerationOptions) throws -> (MLXArray, Int, Int) {
         try Task.checkCancellation()
@@ -99,7 +108,7 @@ public final class Confucius4Model: SpeechGenerationModel, @unchecked Sendable {
         let condition = prefix.condition((semantic - mean) / std)
         let style = speaker.inference([audio]).reshaped([1, 192])
         let refMel = try Confucius4Features.referenceMel(audio)
-        let ids = tokenizer.encode(text: Self.prompt(text: text, language: language), addSpecialTokens: true)
+        let ids = Self.promptIDs(tokenizer, text: text, language: language)
         guard !ids.isEmpty, ids.count <= prefix["text_position_embedding.embedding.weight"].shape[0],
               ids.allSatisfy({ $0 >= 0 && $0 < prefix["text_projector.embed.weight"].shape[0] }) else {
             throw AudioGenerationError.invalidInput("Confucius4 text exceeds its learned text positions or vocabulary")
@@ -188,8 +197,7 @@ public final class Confucius4Model: SpeechGenerationModel, @unchecked Sendable {
         guard let object = try JSONSerialization.jsonObject(with: Data(contentsOf: directory.appendingPathComponent("checkpoints/tokenizer.json"))) as? [NSString: Any] else {
             throw AudioGenerationError.invalidInput("Invalid Confucius4 tokenizer JSON")
         }
-        let tokenizer = try PreTrainedTokenizer(tokenizerConfig: ["tokenizer_class": "LlamaTokenizer", "bos_token": "<s>",
-            "eos_token": "</s>", "unk_token": "<unk>", "add_bos_token": true, "add_eos_token": false], tokenizerData: Config(object))
+        let tokenizer = try Self.tokenizer(data: Config(object))
         eval(camp, vocoder)
         return Confucius4Model(config: config, w2v: w2v, t2s: t2s, s2a: s2a, speaker: camp, vocoder: vocoder,
                                stats: stats, filters: filters, tokenizer: tokenizer)

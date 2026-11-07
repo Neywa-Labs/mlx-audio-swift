@@ -1,7 +1,9 @@
 import Foundation
+import Hub
 import MLX
 import MLXAudioCore
 import Testing
+import Tokenizers
 @testable import MLXAudioTTS
 
 @Suite("Confucius4 native inference", .serialized)
@@ -24,6 +26,24 @@ struct Confucius4Tests {
         w["semantic_head.weight"] = tensor([6, 4]); w["semantic_head.bias"] = tensor([6])
         return Confucius4T2S(w, heads: 2, layers: 2, bos: 4, eos: 5)
     }
+    @Test func promptEndsWithEndOfSequenceToken() throws {
+        let strings = ["<unk>", "<s>", "</s>"]
+        let vocab = Dictionary(uniqueKeysWithValues: strings.enumerated().map { ($0.element, $0.offset) })
+        let added: [[String: Any]] = strings.enumerated().map { ["id": $0.offset, "content": $0.element, "special": true] }
+        let template: [String: Any] = ["type": "TemplateProcessing",
+            "single": [["SpecialToken": ["id": "<s>", "type_id": 0]], ["Sequence": ["id": "A", "type_id": 0]]],
+            "pair": [["SpecialToken": ["id": "<s>", "type_id": 0]], ["Sequence": ["id": "A", "type_id": 0]],
+                     ["SpecialToken": ["id": "<s>", "type_id": 1]], ["Sequence": ["id": "B", "type_id": 1]]],
+            "special_tokens": ["<s>": ["id": "<s>", "ids": [1], "tokens": ["<s>"]]]]
+        let data: [NSString: Any] = ["model": ["type": "BPE", "unk_token": "<unk>", "merges": [], "vocab": vocab],
+                                     "added_tokens": added, "post_processor": template]
+        let tokenizer = try Confucius4Model.tokenizer(data: Config(data))
+        let ids = Confucius4Model.promptIDs(tokenizer, text: "two buttons.", language: "en")
+        #expect(ids.first == 1)
+        #expect(ids.last == 2)
+        #expect(ids.filter { $0 == 2 }.count == 1)
+    }
+
     @Test func gptMatchesCPUReferenceAndIncrementalCache() throws {
         try Device.withDefaultDevice(.cpu) {
             let model = tinyGPT(), input = tensor([1, 3, 4])
