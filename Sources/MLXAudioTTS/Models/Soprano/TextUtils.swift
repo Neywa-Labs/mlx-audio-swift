@@ -171,6 +171,15 @@ private func expandNumSuffix(_ match: String) -> String {
     return "\(digit) \(suffixes[suffix] ?? "")"
 }
 
+/// A phone number is read digit by digit in groups of three, three and four:
+/// "(415) 555-0123" -> "4 1 5, 5 5 5, 0 1 2 3".
+private func expandPhoneNumber(_ match: String) -> String {
+    let digits = Array(match.filter(\.isNumber))
+    guard digits.count == 10 else { return match }
+    let groups = [digits[0..<3], digits[3..<6], digits[6...]]
+    return groups.map { $0.map(String.init).joined(separator: " ") }.joined(separator: ", ")
+}
+
 /// Readings follow Soprano's reference normalizer ("3:30" -> "3 30", "9:05" -> "9 oh 5",
 /// "3:00" -> "3 o'clock"); the number step speaks the digits.
 private func expandTime(_ match: String) -> String {
@@ -302,6 +311,20 @@ private func normalizeNumbers(_ text: String) -> String {
             if let matchRange = Range(match.range, in: result) {
                 let matchStr = String(result[matchRange])
                 result.replaceSubrange(matchRange, with: matchStr.replacingOccurrences(of: ",", with: ""))
+            }
+        }
+    }
+
+    // Ten-digit phone numbers, not part of a longer number
+    if let regex = try? NSRegularExpression(
+        pattern: "(?<!\\d)\\(?\\d{3}\\)?[-.\\s]\\d{3}[-.\\s]?\\d{4}(?!\\d)", options: []
+    ) {
+        let range = NSRange(result.startIndex..., in: result)
+        let matches = regex.matches(in: result, range: range).reversed()
+        for match in matches {
+            if let matchRange = Range(match.range, in: result) {
+                let matchStr = String(result[matchRange])
+                result.replaceSubrange(matchRange, with: expandPhoneNumber(matchStr))
             }
         }
     }

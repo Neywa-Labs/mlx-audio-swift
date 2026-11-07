@@ -1512,6 +1512,21 @@ struct SopranoTextCleaningTests {
         #expect(cleanTextForSoprano("It took 1:05:09 total.") == "it took one oh five oh nine total.")
     }
 
+    @Test func phoneNumbersAreReadDigitByDigit() {
+        #expect(
+            cleanTextForSoprano("Call 555-123-4567 now.")
+                == "call five five five, one two three, four five six seven now.")
+        #expect(
+            cleanTextForSoprano("Call (415) 555-0123 today.")
+                == "call four one five, five five five, zero one two three today.")
+        #expect(
+            cleanTextForSoprano("Fax 555.123.4567.") == "fax five five five, one two three, four five six seven.")
+        // Digits inside a longer number are not a phone number.
+        #expect(
+            cleanTextForSoprano("Order 12345 678 9012 shipped.")
+                == "order twelve thousand three hundred forty five six hundred seventy eight nine thousand twelve shipped.")
+    }
+
     @Test func fractionalSecondsAreSpoken() {
         let cases = [
             "1:00:00.5": "one oh oh zero point five",
