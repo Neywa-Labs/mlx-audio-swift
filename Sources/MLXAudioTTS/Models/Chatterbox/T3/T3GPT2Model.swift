@@ -266,20 +266,7 @@ public class T3GPT2Model: Module {
         return weights
     }
 
-    // MARK: - Inference (Turbo)
-
-    /// Generate speech tokens using Turbo inference (no CFG).
-    ///
-    /// Matches Python's `inference_turbo` method.
-    public func inference(
-        t3Cond: inout T3Cond,
-        textTokens: MLXArray,
-        maxNewTokens: Int = 1000,
-        temperature: Float = 0.8,
-        topK: Int = 1000,
-        topP: Float = 0.95,
-        repetitionPenalty: Float = 1.2
-    ) -> MLXArray {
+    func prepareInputEmbeddings(t3Cond: inout T3Cond, textTokens: MLXArray) -> MLXArray {
         var tokens = textTokens
         if tokens.ndim == 1 {
             tokens = tokens.expandedDimensions(axis: 0)
@@ -299,7 +286,25 @@ public class T3GPT2Model: Module {
         let speechStartEmbed = speechEmb(speechStartToken)
 
         // Build initial input: [conditioning | text | speech_start]
-        let inputEmbeddings = MLX.concatenated([condEmb, textEmbResult, speechStartEmbed], axis: 1)
+        return MLX.concatenated(
+            [condEmb.asType(textEmbResult.dtype), textEmbResult, speechStartEmbed], axis: 1)
+    }
+
+    // MARK: - Inference (Turbo)
+
+    /// Generate speech tokens using Turbo inference (no CFG).
+    ///
+    /// Matches Python's `inference_turbo` method.
+    public func inference(
+        t3Cond: inout T3Cond,
+        textTokens: MLXArray,
+        maxNewTokens: Int = 1000,
+        temperature: Float = 0.8,
+        topK: Int = 1000,
+        topP: Float = 0.95,
+        repetitionPenalty: Float = 1.2
+    ) -> MLXArray {
+        let inputEmbeddings = prepareInputEmbeddings(t3Cond: &t3Cond, textTokens: textTokens)
 
         // Create KV cache
         let cache = makeCache()
