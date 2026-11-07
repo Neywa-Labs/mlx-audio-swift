@@ -234,9 +234,11 @@ public final class Audio8Model: Module, SpeechGenerationModel, @unchecked Sendab
         }
         let model = Audio8Model(config: config)
         var weights = try loadArrays(url: directory.appendingPathComponent("model.safetensors"))
-        for (key, value) in try loadArrays(url: directory.appendingPathComponent(config.codecFilename)) {
-            guard weights[key] == nil else { throw AudioGenerationError.invalidInput("Duplicate Audio8 weight: \(key)") }
-            weights[key] = value
+        if config.codecFilename != "model.safetensors" {
+            for (key, value) in try loadArrays(url: directory.appendingPathComponent(config.codecFilename)) {
+                guard weights[key] == nil else { throw AudioGenerationError.invalidInput("Duplicate Audio8 weight: \(key)") }
+                weights[key] = value
+            }
         }
         weights = sanitize(weights)
         if let q = config.quantization {

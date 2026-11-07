@@ -175,6 +175,23 @@ struct Audio8Tests {
         let again = Audio8Model.sanitize(converted)
         #expect(again["model.slow.layers.0.mamba.conv1d.weight"]?.asArray(Float.self) == torch.asArray(Float.self))
     }
+    @Test func codecBundledInModelFileIsReadOnce() async throws {
+        func loadError(_ config: String, _ files: [String: [String: MLXArray]]) async throws -> String {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("audio8-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            try Data(config.utf8).write(to: directory.appendingPathComponent("config.json"))
+            for (name, arrays) in files { try save(arrays: arrays, url: directory.appendingPathComponent(name)) }
+            do { _ = try await Audio8Model.fromModelDirectory(directory); return "" } catch { return "\(error)" }
+        }
+        let lm = ["model.embeddings.weight": MLXArray.zeros([2, 2])]
+        let codec = ["codec.decoder.model.0.conv.weight": MLXArray.zeros([2, 2])]
+        let bundled = try await loadError(#"{"codec_filename":"model.safetensors"}"#,
+                                          ["model.safetensors": lm.merging(codec) { a, _ in a }])
+        #expect(!bundled.contains("Duplicate Audio8 weight"))
+        let clash = try await loadError("{}", ["model.safetensors": lm.merging(codec) { a, _ in a }, "codec.safetensors": codec])
+        #expect(clash.contains("Duplicate Audio8 weight"))
+    }
     @Test func quantizedFeedForwardRoundTrip() throws {
         let first = Audio8FeedForward(dim: 64, intermediate: 64)
         quantize(model: first, groupSize: 32, bits: 4)
