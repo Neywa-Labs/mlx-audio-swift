@@ -2990,8 +2990,8 @@ struct IndexTTSTests {
             ),
             (
                 "What's this? It's $12,345.",
-                "What is this? It is twelve thousand three hundred forty five dollars",
-                "WHAT IS THIS? IT IS TWELVE THOUSAND THREE HUNDRED FORTY FIVE DOLLARS"
+                "What is this? It is twelve thousand three hundred forty five dollars.",
+                "WHAT IS THIS? IT IS TWELVE THOUSAND THREE HUNDRED FORTY FIVE DOLLARS."
             ),
             (
                 "call 1 2 3 now",
@@ -3029,6 +3029,28 @@ struct IndexTTSTests {
             let normalized = IndexTTSTextNormalizer.normalize(input)
             #expect(normalized == expectedNormalized)
             #expect(IndexTTSTextNormalizer.tokenizeByCJKChar(normalized) == expectedTokenized)
+        }
+    }
+
+    @Test func normalizerReadsDollarsAndCentsSeparately() {
+        let cases = [
+            ("It costs $2.50 today.", "It costs two dollars fifty cents today."),
+            ("Pay $1,299.99 now.", "Pay one thousand two hundred ninety nine dollars ninety nine cents now."),
+            ("It costs $0.99 each.", "It costs ninety nine cents each."),
+            ("It costs $3.5.", "It costs three dollars fifty cents."),
+            ("Only $1 left.", "Only one dollar left."),
+            ("It costs $5.", "It costs five dollars."),
+            ("I have $5 10 apples.", "I have five dollars ten apples."),
+            ("Prices: $5,$10,$20.", "Prices, five dollars,ten dollars,twenty dollars."),
+            ("Pay $5, or $10.", "Pay five dollars, or ten dollars."),
+            (
+                "Prices: $1,000,$2,500.25.",
+                "Prices, one thousand dollars,two thousand five hundred dollars twenty five cents."
+            ),
+        ]
+
+        for (input, expected) in cases {
+            #expect(IndexTTSTextNormalizer.normalize(input) == expected)
         }
     }
 

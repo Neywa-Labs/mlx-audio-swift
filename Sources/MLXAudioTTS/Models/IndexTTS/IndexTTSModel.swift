@@ -102,17 +102,27 @@ public enum IndexTTSTextNormalizer {
 
     private static func normalizeEnglish(_ text: String) -> String {
         var result = expandContractions(text)
+        // Commas belong to the amount only when followed by more digits.
+        // The cents follow a decimal point; a period with no digits after it
+        // ends the sentence.
         result = replacingMatches(
             in: result,
-            pattern: #"\$\s*[0-9,.\s]+"#
-        ) { match, _ in
-            let digits = extractDigits(match)
-            guard let number = Int(digits), !digits.isEmpty else {
+            pattern: #"\$\s*(\d+(?:,\d+)*)(?:\.(\d+))?"#
+        ) { match, captures in
+            guard let dollars = Int(extractDigits(captures[0])) else {
                 return match
             }
-            return "\(numberToWords(number)) dollar\(number == 1 ? "" : "s") "
+            let fraction = captures[1].prefix(2)
+            let cents = (Int(fraction) ?? 0) * (fraction.count == 1 ? 10 : 1)
+            var words: [String] = []
+            if dollars != 0 || cents == 0 {
+                words.append("\(numberToWords(dollars)) dollar\(dollars == 1 ? "" : "s")")
+            }
+            if cents != 0 {
+                words.append("\(numberToWords(cents)) cent\(cents == 1 ? "" : "s")")
+            }
+            return words.joined(separator: " ")
         }
-        result = trimTrailingWhitespace(result)
 
         result = replacingMatches(
             in: result,
