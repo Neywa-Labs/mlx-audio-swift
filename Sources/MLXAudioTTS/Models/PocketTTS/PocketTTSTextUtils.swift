@@ -9,6 +9,10 @@ public enum PocketTTSTextUtils {
         t = t.replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\r", with: " ")
             .replacingOccurrences(of: "  ", with: " ")
+        // Curly apostrophes never appear in the model's training data, so
+        // "wouldn\u{2019}t" is misread. Use plain ones, as pocket-tts does.
+        t = t.replacingOccurrences(of: "\u{2019}", with: "'")
+            .replacingOccurrences(of: "\u{2018}", with: "'")
 
         let wordCount = t.split(separator: " ").count
         let framesAfterEosGuess = wordCount <= 4 ? 3 : 1
