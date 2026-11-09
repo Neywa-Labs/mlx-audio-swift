@@ -2,7 +2,7 @@ import Foundation
 import MLX
 import MLXNN
 
-/// Metadata and load-time adaptation for published ternary and prepared MLX Redux weights.
+/// Metadata and load-time adaptation for Hugging Face Parakeet TDT weights and prepared MLX Redux weights.
 struct ParakeetReduxConfig: Decodable {
     struct Encoder: Decodable {
         let hiddenSize: Int
@@ -33,8 +33,10 @@ struct ParakeetReduxConfig: Decodable {
     let vocabSize: Int
     let durations: [Int]
     let maxSymbolsPerStep: Int
-    let ternaryGroupSize: Int
-    let ternaryModules: [String]
+    let ternaryGroupSize: Int?
+    let ternaryModules: [String]?
+
+    private var quantizedModules: [String] { ternaryModules ?? [] }
 
     var weightFormat: String { reduxWeightFormat ?? "thrush-ternary-v2" }
 
@@ -62,8 +64,8 @@ struct ParakeetReduxConfig: Decodable {
             hiddenAct == "relu", decoderHiddenSize > 0, numDecoderLayers > 0,
             blankTokenId > 0, blankTokenId == vocabSize - 1,
             durations.first == 0, zip(durations, durations.dropFirst()).allSatisfy({ $0 < $1 }),
-            maxSymbolsPerStep > 0, ternaryGroupSize == 128,
-            Set(ternaryModules).count == ternaryModules.count
+            maxSymbolsPerStep > 0, quantizedModules.isEmpty || ternaryGroupSize == 128,
+            Set(quantizedModules).count == quantizedModules.count
         else { throw STTError.invalidInput("Unsupported Parakeet Redux configuration") }
 
         struct Tokenizer: Decodable {
@@ -120,8 +122,9 @@ struct ParakeetReduxConfig: Decodable {
 
     /// Replaces only the encoder projections declared by the checkpoint.
     func configure(_ model: ParakeetModel, weights: [String: MLXArray]) throws {
+        guard !quantizedModules.isEmpty, let ternaryGroupSize else { return }
         let expected = projectionShapes
-        let names = ternaryModules.map(Self.mapWeightName)
+        let names = quantizedModules.map(Self.mapWeightName)
         guard Set(names) == Set(expected.keys), names.count == expected.count else {
             throw STTError.invalidInput("Redux ternary_modules must cover every encoder projection exactly once")
         }
@@ -143,7 +146,7 @@ struct ParakeetReduxConfig: Decodable {
     }
 
     func validateManifest(in directory: URL) throws {
-        guard weightFormat == "thrush-ternary-v2" else { return }
+        guard weightFormat == "thrush-ternary-v2", !quantizedModules.isEmpty else { return }
         struct Manifest: Decodable {
             struct Quant: Decodable { let mode: String; let groupSize: Int }
             struct Packing: Decodable { let base: Int; let elementsPerByte: Int; let codeOffset: Int }
@@ -168,8 +171,8 @@ struct ParakeetReduxConfig: Decodable {
         guard manifest.format == weightFormat, manifest.names == "hf",
             manifest.quant.mode == "ternary", manifest.quant.groupSize == 128,
             manifest.packing.base == 3, manifest.packing.elementsPerByte == 5, manifest.packing.codeOffset == 1,
-            manifest.quantizedModules.count == ternaryModules.count,
-            Set(manifest.quantizedModules.map(\.name)) == Set(ternaryModules)
+            manifest.quantizedModules.count == quantizedModules.count,
+            Set(manifest.quantizedModules.map(\.name)) == Set(quantizedModules)
         else { throw STTError.invalidInput("Unsupported Redux ternary manifest") }
         let shapes = projectionShapes
         for entry in manifest.quantizedModules {
@@ -228,7 +231,7 @@ struct ParakeetReduxConfig: Decodable {
             ["weight", "bias"].map { "vad_head.\(layer).\($0)" }
         } + (0..<encoderConfig.numHiddenLayers).map { "encoder.layers.\($0).conv.norm.num_batches_tracked" })
         let shapes = projectionShapes
-        let names = Set(ternaryModules)
+        let names = Set(quantizedModules)
         var result: [String: MLXArray] = [:]
         for (name, original) in weights {
             if ignored.contains(name) || name.range(of: "^decoder\\.lstm\\.bias_(ih|hh)_l\\d+$", options: .regularExpression) != nil { continue }

@@ -991,7 +991,8 @@ public extension ParakeetModel {
         let rawConfigData = try Data(contentsOf: configURL)
         let configData = normalizedConfigData(rawConfigData)
         let object = try JSONSerialization.jsonObject(with: configData) as? [String: Any]
-        let redux = object?["ternary_modules"] != nil ? try ParakeetReduxConfig.decode(configData) : nil
+        let redux = object?["encoder_config"] != nil && object?["durations"] != nil
+            ? try ParakeetReduxConfig.decode(configData) : nil
         let rawConfig = try redux?.modelConfig(tokenizerAt: modelDir.appendingPathComponent("tokenizer.json"))
             ?? JSONDecoder().decode(ParakeetRawConfig.self, from: configData)
         try redux?.validateManifest(in: modelDir)

@@ -16,6 +16,8 @@ derivative of NVIDIA's Parakeet TDT 0.6B v3.
 - [mlx-community/parakeet-rnnt-1.1b](https://huggingface.co/mlx-community/parakeet-rnnt-1.1b)
 - [mlx-community/parakeet-tdt_ctc-110m](https://huggingface.co/mlx-community/parakeet-tdt_ctc-110m)
 - [moondream/parakeet-redux](https://huggingface.co/moondream/parakeet-redux)
+- [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra) (dense Hugging Face export)
+- [oruk/orukeet](https://huggingface.co/oruk/orukeet) (dense Hugging Face export)
 
 ## CLI Example
 
@@ -82,3 +84,9 @@ for try await event in model.generateStream(audio: audio) {
 Parakeet Redux weights are licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 Attribution: [Moondream](https://huggingface.co/moondream/parakeet-redux) for Parakeet Redux
 and [NVIDIA](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) for the original Parakeet model.
+
+## Parakeet Ultra and Orukeet Licenses
+
+Parakeet Ultra weights are licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) by
+[Moondream](https://huggingface.co/moondream/parakeet-ultra). Orukeet weights are licensed under
+[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) by [Oruk](https://huggingface.co/oruk/orukeet).

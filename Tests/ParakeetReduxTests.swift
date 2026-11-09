@@ -159,6 +159,48 @@ struct ParakeetReduxTests {
         }
     }
 
+    private func denseCheckpoint() throws -> URL {
+        let directory = try publishedCheckpoint()
+        do {
+            let file = directory.appendingPathComponent("model.safetensors")
+            var weights = try MLX.loadArrays(url: file)
+            for (hfName, _, shape) in projections {
+                let name = "encoder.layers.0." + hfName
+                weights.removeValue(forKey: name + ".qweight")
+                weights.removeValue(forKey: name + ".scales")
+                let values = sin(arange(shape[0] * shape[1], dtype: .float32) * 0.2) * 0.03
+                weights[name + ".weight"] = hfName.hasPrefix("conv.")
+                    ? values.reshaped(shape[0], shape[1], 1) : values.reshaped(shape)
+            }
+            eval(Array(weights.values))
+            var config = tinyConfig
+            for key in ["redux_weight_format", "ternary_group_size", "ternary_modules"] {
+                config.removeValue(forKey: key)
+            }
+            try JSONSerialization.data(withJSONObject: config).write(to: directory.appendingPathComponent("config.json"))
+            try FileManager.default.removeItem(at: directory.appendingPathComponent("ternary.json"))
+            try MLX.save(arrays: weights, url: file)
+            return directory
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
+    }
+
+    @Test func denseCheckpointLoadsThroughHFPath() async throws {
+        let directory = try denseCheckpoint()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let model = try #require(try await STT.loadModel(modelRepo: directory.path) as? ParakeetModel)
+        #expect(model.usesReduxDecoding)
+        #expect(model.computeDType == .float32)
+        let params = Dictionary(uniqueKeysWithValues: model.parameters().flattened())
+        #expect(params["encoder.layers.0.conv.pointwise_conv1.weight"]?.shape == [256, 1, 128])
+        #expect(params["encoder.layers.0.conv.pointwise_conv1.weight"]?.dtype == .float32)
+        #expect(params["encoder.layers.0.feed_forward1.linear1.weight"]?.shape == [256, 128])
+        #expect(params["encoder.layers.0.feed_forward1.linear1.scales"] == nil)
+        #expect(model.generate(audio: MLXArray.ones([1600])).text.isEmpty)
+    }
+
     @Test func ternaryRepackingPreservesCodesAcrossByteAndWordBoundaries() throws {
         let rows = 3, columns = 128, rowBytes = (columns + 4) / 5
         let powers = [1, 3, 9, 27, 81]
