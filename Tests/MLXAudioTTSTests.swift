@@ -1224,6 +1224,23 @@ struct Qwen3TTSTests {
         #expect(abs(concatenated(chunks, axis: 1) - reference).max().item(Float.self) < 5e-3)
     }
 
+    @Test func speechEncoderTransformerUsesRotateHalfRoPE() throws {
+        let json = """
+            {"hidden_size": 16, "num_attention_heads": 2, "num_key_value_heads": 2, "num_hidden_layers": 1,
+             "intermediate_size": 32, "num_filters": 4, "codebook_dim": 8, "codebook_size": 16,
+             "num_quantizers": 2, "rope_theta": 10000}
+            """
+        let config = try JSONDecoder().decode(Qwen3TTSTokenizerEncoderConfig.self, from: Data(json.utf8))
+        let encoder = Qwen3TTSSpeechTokenizerEncoder(config: config, validNumQuantizers: 2)
+        let rope = try #require(encoder.encoderTransformer.transformer.layers[0].self_attn.rope)
+        let x = MLXRandom.normal([1, 2, 12, 8], key: MLXRandom.key(0))
+
+        // The checkpoint's q/k projections are in Hugging Face layout, which pairs dimension i
+        // with i + headDim / 2 (MLX traditional: false), not with i + 1.
+        let rotateHalf = RoPE(dimensions: 8, traditional: false, base: 10_000)(x)
+        #expect(abs(rope(x) - rotateHalf).max().item(Float.self) < 1e-5)
+    }
+
     @Test func customVoicePromptSplitsSpeakerAndInstruction() {
         let combined = Qwen3TTSModel.parseCustomVoicePrompt("Vivian, very happy and excited.")
         #expect(combined?.speaker == "Vivian")
