@@ -41,7 +41,7 @@ public final class Confucius4Model: SpeechGenerationModel, @unchecked Sendable {
     public let config: Confucius4Config
     public var sampleRate: Int { config.sampleRate }
     public var defaultGenerationParameters: GenerateParameters {
-        .init(maxTokens: 512, temperature: 0.8, topP: 0.8, topK: 30, repetitionPenalty: 10, seed: 0)
+        .init(temperature: 0.8, topP: 0.8, topK: 30, repetitionPenalty: 10, seed: 0)
     }
     let semanticEncoder: Confucius4W2VBert
     let prefix: Confucius4Prefix
@@ -95,7 +95,7 @@ public final class Confucius4Model: SpeechGenerationModel, @unchecked Sendable {
         guard rate > 0, options.diffusionSteps > 0, options.diffusionSteps <= 1000, options.guidance.isFinite,
               options.guidance >= 0, p.temperature.isFinite, p.temperature >= 0,
               p.topP.isFinite, p.topP > 0, p.topP <= 1, p.topK >= 0,
-              (p.maxTokens ?? 512) >= 2, (p.repetitionPenalty ?? 10).isFinite, (p.repetitionPenalty ?? 10) > 0 else {
+              (p.maxTokens ?? 2) >= 2, (p.repetitionPenalty ?? 10).isFinite, (p.repetitionPenalty ?? 10) > 0 else {
             throw AudioGenerationError.invalidInput("Invalid Confucius4 generation parameters")
         }
         let values = Confucius4Features.resample(reference.reshaped([-1]).asArray(Float.self), from: rate, to: 16000)
@@ -108,23 +108,69 @@ public final class Confucius4Model: SpeechGenerationModel, @unchecked Sendable {
         let condition = prefix.condition((semantic - mean) / std)
         let style = speaker.inference([audio]).reshaped([1, 192])
         let refMel = try Confucius4Features.referenceMel(audio)
-        let ids = Self.promptIDs(tokenizer, text: text, language: language)
-        guard !ids.isEmpty, ids.count <= prefix["text_position_embedding.embedding.weight"].shape[0],
-              ids.allSatisfy({ $0 >= 0 && $0 < prefix["text_projector.embed.weight"].shape[0] }) else {
-            throw AudioGenerationError.invalidInput("Confucius4 text exceeds its learned text positions or vocabulary")
+        let segments = Self.segments(text, language: language) { tokenizer.encode(text: $0, addSpecialTokens: false).count }
+        var waves: [MLXArray] = [], promptTokens = 0, codeCount = 0
+        for (i, segment) in segments.enumerated() {
+            let ids = Self.promptIDs(tokenizer, text: segment, language: language)
+            guard !ids.isEmpty, ids.count <= prefix["text_position_embedding.embedding.weight"].shape[0],
+                  ids.allSatisfy({ $0 >= 0 && $0 < prefix["text_projector.embed.weight"].shape[0] }) else {
+                throw AudioGenerationError.invalidInput("Confucius4 text exceeds its learned text positions or vocabulary")
+            }
+            let textEmbedding = prefix.text(MLXArray(ids.map(Int32.init)).reshaped([1, -1]))
+            eval(condition, style, refMel, textEmbedding)
+            let seed = (p.seed ?? 0) &+ UInt64(i)
+            var segmentParameters = p
+            segmentParameters.seed = seed
+            let (codes, latent) = try t2s.generate(condition: condition, text: textEmbedding, parameters: segmentParameters)
+            let mu = acoustic.buildMu(codes: codes, latent: latent, referenceFrames: refMel.shape[1])
+            let noise = MLXRandom.normal([1, 80, mu.shape[1]], key: MLXRandom.split(key: MLXRandom.key(seed)).1)
+            let fullMel = try acoustic.solve(noise: noise, prompt: refMel.transposed(0, 2, 1), mu: mu, speaker: style,
+                                            steps: options.diffusionSteps, guidance: options.guidance)
+            let mel = fullMel[0..., 0..., refMel.shape[1]...]
+            try Task.checkCancellation()
+            let wav = vocoder(mel).reshaped([-1]); eval(wav)
+            guard wav.size > 0, all(isFinite(wav)).item(Bool.self) else { throw AudioGenerationError.generationFailed("Confucius4 produced invalid audio") }
+            waves.append(wav); promptTokens += ids.count; codeCount += codes.shape[1]
         }
-        let textEmbedding = prefix.text(MLXArray(ids.map(Int32.init)).reshaped([1, -1]))
-        eval(condition, style, refMel, textEmbedding)
-        let (codes, latent) = try t2s.generate(condition: condition, text: textEmbedding, parameters: p)
-        let mu = acoustic.buildMu(codes: codes, latent: latent, referenceFrames: refMel.shape[1])
-        let noise = MLXRandom.normal([1, 80, mu.shape[1]], key: MLXRandom.split(key: MLXRandom.key(p.seed ?? 0)).1)
-        let fullMel = try acoustic.solve(noise: noise, prompt: refMel.transposed(0, 2, 1), mu: mu, speaker: style,
-                                        steps: options.diffusionSteps, guidance: options.guidance)
-        let mel = fullMel[0..., 0..., refMel.shape[1]...]
-        try Task.checkCancellation()
-        let wav = vocoder(mel).reshaped([-1]); eval(wav)
-        guard wav.size > 0, all(isFinite(wav)).item(Bool.self) else { throw AudioGenerationError.generationFailed("Confucius4 produced invalid audio") }
-        return (wav, ids.count, codes.shape[1])
+        let wav = waves.count == 1 ? waves[0] : MLXArray(Self.crossFade(waves.map { $0.asArray(Float.self) }, sampleRate: sampleRate))
+        return (wav, promptTokens, codeCount)
+    }
+    static func segments(_ text: String, language: String?, count: (String) -> Int) -> [String] {
+        let zh = language == "zh"
+        func length(_ s: String) -> Int { zh ? s.count : count(s) }
+        let marks = Set(zh ? "。？！；：.?!;" : ".?!;:")
+        var characters = Array(text)
+        if let last = characters.last, !marks.contains(last) { characters.append(zh ? "。" : ".") }
+        var sentences: [String] = [], start = 0
+        for (i, character) in characters.enumerated() where marks.contains(character) && i > start {
+            let end = i + 1 < characters.count && characters[i + 1] == "\"" ? i + 2 : i + 1
+            sentences.append(String(characters[start..<end])); start = end
+        }
+        if sentences.count == 1, length(sentences[0]) > 80 {
+            let unbroken = Array(sentences[0].dropLast())
+            sentences = stride(from: 0, to: unbroken.count, by: 80).map { String(unbroken[$0..<min($0 + 80, unbroken.count)]) }
+        }
+        var segments: [String] = [], current = ""
+        for sentence in sentences {
+            if length(current + sentence) > 80 && length(current) > 60 { segments.append(current); current = "" }
+            current += sentence
+        }
+        if !current.isEmpty {
+            if length(current) < 20, !segments.isEmpty { segments[segments.count - 1] += current } else { segments.append(current) }
+        }
+        if zh { segments = segments.map { s in s.last.map { "。；：.;".contains($0) } == true ? String(s.dropLast()) : s } }
+        segments = segments.filter { s in s.contains { $0.isLetter || $0.isNumber } }
+        return segments.count < 2 ? [text] : segments
+    }
+    static func crossFade(_ chunks: [[Float]], sampleRate: Int) -> [Float] {
+        let fade = Int(0.3 * Double(sampleRate)) / 3
+        return chunks.dropFirst().reduce(chunks[0]) { merged, chunk in
+            var merged = merged, chunk = chunk
+            let tail = min(fade, merged.count), head = min(fade, chunk.count)
+            for k in 0..<tail { merged[merged.count - tail + k] *= tail == 1 ? 1 : 1 - Float(k) / Float(tail - 1) }
+            for k in 0..<head { chunk[k] *= head == 1 ? 0 : Float(k) / Float(head - 1) }
+            return merged + [Float](repeating: 0, count: fade) + chunk
+        }
     }
     public func generate(text: String, voice: String?, refAudio: MaterializedArray?, refText: String?, language: String?,
                          generationParameters: GenerateParameters) async throws -> MaterializedArray {

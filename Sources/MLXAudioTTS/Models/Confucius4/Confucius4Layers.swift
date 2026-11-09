@@ -222,7 +222,7 @@ final class Confucius4T2S: Confucius4Weights {
         var logits = head(hidden[0..., (hidden.shape[1] - 1)...])[0, 0]
         var generated: [Int] = []
         var rng = Confucius4Random(seed: p.seed ?? 0)
-        let limit = min(p.maxTokens ?? 512, self["semantic_position_embedding.embedding.weight"].shape[0] - 1)
+        let limit = min(p.maxTokens ?? .max, self["semantic_position_embedding.embedding.weight"].shape[0] - text.shape[1] - 2)
         for position in 1...limit {
             try Task.checkCancellation(); eval(logits)
             let id = Self.sample(logits.asArray(Float.self), generated: generated, temperature: p.temperature,

@@ -197,4 +197,53 @@ struct Confucius4Tests {
         try Data("{\"model_type\":\"confucius4\"}".utf8).write(to: folder.appendingPathComponent("config.json"))
         await #expect(throws: (any Error).self) { try await TTS.loadModel(modelRepo: folder.path) }
     }
+    func words(_ text: String) -> Int { text.split(separator: " ").count }
+    @Test func textThatMakesFewerThanTwoSegmentsIsKeptAsWritten() {
+        for text in ["Short text without a stop", "One sentence. And a second.", "..."] {
+            #expect(Confucius4Model.segments(text, language: "en", count: words) == [text])
+        }
+    }
+    @Test func longTextSplitsAtSentenceEnds() {
+        let sentence = Array(repeating: "word", count: 30).joined(separator: " ") + "."
+        let text = Array(repeating: sentence, count: 6).joined(separator: " ")
+        let segments = Confucius4Model.segments(text, language: "en", count: words)
+        #expect(segments.count > 1)
+        #expect(segments.joined() == text)
+        #expect(segments.allSatisfy { $0.hasSuffix(".") && words($0) <= 90 })
+    }
+    @Test func shortTailJoinsTheLastSegment() {
+        let sentence = Array(repeating: "word", count: 70).joined(separator: " ") + "."
+        let tail = Array(repeating: "bye", count: 15).joined(separator: " ") + "."
+        let segments = Confucius4Model.segments("\(sentence) \(sentence) \(tail)", language: "en", count: words)
+        #expect(segments.count == 2)
+        #expect(segments.last?.hasSuffix(" " + tail) == true)
+    }
+    @Test func chineseCountsCharactersAndDropsTheLastFullStop() {
+        let text = String(repeating: "今", count: 70) + "。" + String(repeating: "天", count: 70) + "。"
+        #expect(Confucius4Model.segments(text, language: "zh", count: words) == [String(repeating: "今", count: 70), String(repeating: "天", count: 70)])
+    }
+    @Test func oneLongSentenceSplitsByLength() {
+        let segments = Confucius4Model.segments(String(repeating: "天", count: 200), language: "zh", count: words)
+        #expect(segments.count > 1)
+        #expect(segments.joined() == String(repeating: "天", count: 200))
+    }
+    @Test func crossFadeJoinsSegmentsAroundASilentGap() {
+        let merged = Confucius4Model.crossFade([[Float](repeating: 1, count: 50), [Float](repeating: 1, count: 50)], sampleRate: 100)
+        #expect(merged.count == 110)
+        #expect(merged[..<40].allSatisfy { $0 == 1 })
+        #expect(merged[49] == 0)
+        #expect(merged[50..<60].allSatisfy { $0 == 0 })
+        #expect(merged[60] == 0)
+        #expect(merged[70...].allSatisfy { $0 == 1 })
+    }
+    @Test func generationLengthCountsTheTextPrompt() throws {
+        try Device.withDefaultDevice(.cpu) {
+            let bias = MLXArray([Float(100), 0, 0, 0, -100, -100])
+            let model = Confucius4T2S(tinyGPT().weights.merging(["semantic_head.bias": bias]) { $1 }, heads: 2, layers: 2, bos: 4, eos: 5)
+            let (codes, latent) = try model.generate(condition: tensor([1, 1, 4]), text: tensor([1, 6, 4]),
+                                                     parameters: .init(temperature: 0, repetitionPenalty: 1))
+            #expect(codes.shape == [1, 16 - 6 - 2 - 1])
+            #expect(latent.shape[1] == codes.shape[1])
+        }
+    }
 }

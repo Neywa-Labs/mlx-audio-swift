@@ -4,7 +4,7 @@ Confucius4 is a multilingual speech model with zero-shot and cross-language voic
 
 Supported checkpoint: [mlx-community/Confucius4-TTS-mlx-int8](https://huggingface.co/mlx-community/Confucius4-TTS-mlx-int8).
 
-A reference audio clip is required. A reference transcript is optional and is not used by this model. Supported language prompts are `zh`, `en`, `vi`, `ja`, `ko`, and `th`; the default is Vietnamese. Unknown language codes use the English prompt. The stream API emits one completed waveform per request.
+A reference audio clip is required. A reference transcript is optional and is not used by this model. Supported language prompts are `zh`, `en`, `vi`, `ja`, `ko`, and `th`; the default is Vietnamese. Unknown language codes use the English prompt. The stream API emits one completed waveform per request. Long text is split at sentence punctuation into segments of about 80 tokens, synthesized one by one and joined into a single waveform.
 
 ```bash
 mlx-audio-swift-tts --model mlx-community/Confucius4-TTS-mlx-int8 \
@@ -24,8 +24,7 @@ let audio = try await model.generate(
     refAudio: MLXArray(reference16k).materialized(),
     language: "en",
     generationParameters: .init(
-        maxTokens: 512, temperature: 0.8, topP: 0.8, topK: 30,
-        repetitionPenalty: 10, seed: 0),
+        temperature: 0.8, topP: 0.8, topK: 30, repetitionPenalty: 10, seed: 0),
     options: .init(referenceSampleRate: 16000, diffusionSteps: 25, guidance: 0.7)
 )
 ```
