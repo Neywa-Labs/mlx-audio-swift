@@ -95,8 +95,10 @@ final class BreezeTTSTextAttention: Module {
         self.config = config
         self.layerType = config.layerTypes[layerIndex]
         self.scale = Foundation.pow(config.queryPreAttentionScalar, -0.5)
-        let ropeBase: Float = layerType == "sliding_attention" ? 10_000 : 1_000_000
-        self.rope = RoPE(dimensions: config.headDim, traditional: false, base: ropeBase, scale: 1)
+        let ropeParameters = config.ropeParameters[layerType]
+        let ropeBase = ropeParameters?.ropeTheta ?? (layerType == "sliding_attention" ? 10_000 : 1_000_000)
+        let ropeScale = ropeParameters?.ropeType == "linear" ? 1 / (ropeParameters?.factor ?? 1) : 1
+        self.rope = RoPE(dimensions: config.headDim, traditional: false, base: ropeBase, scale: ropeScale)
         _query.wrappedValue = Linear(config.hiddenSize, config.numAttentionHeads * config.headDim, bias: false)
         _key.wrappedValue = Linear(config.hiddenSize, config.numKeyValueHeads * config.headDim, bias: false)
         _value.wrappedValue = Linear(config.hiddenSize, config.numKeyValueHeads * config.headDim, bias: false)

@@ -2284,6 +2284,30 @@ struct BreezeTTSTests {
         #expect(!values[4])
     }
 
+    @Test func textAttentionUsesPerLayerRopeParameters() throws {
+        let config = try JSONDecoder().decode(BreezeTextEncoderConfig.self, from: Data("""
+        {
+          "hidden_size": 16,
+          "num_hidden_layers": 2,
+          "num_attention_heads": 2,
+          "num_key_value_heads": 1,
+          "head_dim": 8,
+          "layer_types": ["sliding_attention", "full_attention"],
+          "rope_parameters": {
+            "full_attention": {"factor": 8.0, "rope_theta": 1000000, "rope_type": "linear"},
+            "sliding_attention": {"rope_theta": 10000, "rope_type": "default"}
+          }
+        }
+        """.utf8))
+        let x = MLX.sin(MLXArray(0..<96).asType(.float32)).reshaped([1, 2, 6, 8])
+        let sliding = BreezeTTSTextAttention(config: config, layerIndex: 0).rope(x)
+        let full = BreezeTTSTextAttention(config: config, layerIndex: 1).rope(x)
+        let expectedSliding = RoPE(dimensions: 8, traditional: false, base: 10_000, scale: 1)(x)
+        let expectedFull = RoPE(dimensions: 8, traditional: false, base: 1_000_000, scale: 0.125)(x)
+        #expect(allClose(sliding, expectedSliding).item(Bool.self))
+        #expect(allClose(full, expectedFull).item(Bool.self))
+    }
+
     @Test func audioEmbeddingSumsAllCodebooks() {
         let embedding = BreezeAudioEmbedding(
             numCodebooks: 3,
