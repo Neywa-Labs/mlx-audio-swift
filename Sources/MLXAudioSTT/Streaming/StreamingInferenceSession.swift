@@ -130,7 +130,7 @@ private struct MossDecodeLaunch: Sendable {
     let encodedWindowCount: Int
 }
 
-private protocol StreamingInferenceSessionCore: AnyObject, Sendable {
+protocol StreamingInferenceSessionCore: AnyObject, Sendable {
     var events: AsyncStream<TranscriptionEvent> { get }
 
     func feedAudio(samples: [Float])
@@ -156,12 +156,19 @@ public final class StreamingInferenceSession: @unchecked Sendable {
     }
 
     public convenience init(model: Qwen3ASRModel, config: StreamingConfig = StreamingConfig()) {
-        self.init(core: QwenStreamingInferenceSessionCore(model: model, config: config))
+        switch config.policy {
+        case .agreement:
+            self.init(core: QwenStreamingInferenceSessionCore(model: model, config: config))
+        case .stablePrefix:
+            self.init(core: StablePrefixStreamingSessionCore(model: model, language: config.language))
+        }
     }
 
     public convenience init(model: any STTGenerationModel, config: StreamingConfig = StreamingConfig()) {
         if let qwenModel = model as? Qwen3ASRModel {
             self.init(model: qwenModel, config: config)
+        } else if case .stablePrefix = config.policy {
+            preconditionFailure("StreamingPolicy.stablePrefix requires Qwen3ASRModel")
         } else if let cohereModel = model as? CohereTranscribeModel {
             self.init(core: CohereStreamingInferenceSessionCore(model: cohereModel, config: config))
         } else if let mossModel = model as? MossTranscribeDiarizeModel {
