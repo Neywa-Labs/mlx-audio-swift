@@ -1467,11 +1467,13 @@ public class Qwen3ASRModel: Module {
 
                     var totalPromptTokens = 0
                     var totalGenerationTokens = 0
-                    var allGeneratedTokens: [Int] = []
-                    var resolvedLanguage = language
+                    var chunkTexts: [String] = []
+                    var chunkLanguages: [String?] = []
 
-                    for (chunkAudio, _) in chunks {
+                    for (chunkIndex, (chunkAudio, _)) in chunks.enumerated() {
                         try Task.checkCancellation()
+
+                        var resolvedLanguage = language
 
                         // Preprocess this chunk
                         let (inputFeatures, featureAttentionMask, numAudioTokens) = model.preprocessAudio(chunkAudio)
@@ -1537,7 +1539,6 @@ public class Qwen3ASRModel: Module {
                             }
 
                             chunkTokens.append(nextToken)
-                            allGeneratedTokens.append(nextToken)
 
                             // Backstop for greedy callers (penalty == 1.0): same contract
                             // as generateSingleChunk. Disabled when penalty is set so legit
@@ -1574,6 +1575,16 @@ public class Qwen3ASRModel: Module {
                             continuation.yield(.token(languagePrefixBuffer))
                         }
 
+                        let parsedChunk = model.parseGeneratedChunk(
+                            tokenizer.decode(tokens: chunkTokens),
+                            forcedLanguage: language
+                        )
+                        chunkTexts.append(parsedChunk.text)
+                        chunkLanguages.append(parsedChunk.language)
+                        if !parsedChunk.text.isEmpty && chunkIndex < chunks.count - 1 {
+                            continuation.yield(.token(" "))
+                        }
+
                         Memory.clearCache()
                     }
 
@@ -1594,10 +1605,8 @@ public class Qwen3ASRModel: Module {
                     continuation.yield(.info(info))
 
                     // Emit final result
-                    let decodedText = tokenizer.decode(tokens: allGeneratedTokens)
-                    let parsed = model.extractLanguage(from: decodedText)
-                    let outputLanguage = resolvedLanguage ?? parsed.language
-                    let text = language == nil ? parsed.text : decodedText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let outputLanguage = Qwen3ASRModel.mergeLanguages(chunkLanguages)
+                    let text = chunkTexts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
                     let output = STTOutput(
                         text: text,
                         language: outputLanguage,
