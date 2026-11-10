@@ -1081,7 +1081,7 @@ public class Qwen3ASRModel: Module {
 
     // MARK: - Prompt Building
 
-    private func extractLanguage(from text: String) -> (language: String?, text: String) {
+    static func extractLanguage(from text: String) -> (language: String?, text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let prefix = "language "
         let marker = "<asr_text>"
@@ -1134,7 +1134,7 @@ public class Qwen3ASRModel: Module {
             return (normalizedForcedLanguage, trimmed)
         }
 
-        let parsed = extractLanguage(from: decodedText)
+        let parsed = Self.extractLanguage(from: decodedText)
         if let detectedLanguage = normalizeLanguageName(parsed.language) {
             return (detectedLanguage, parsed.text)
         }
@@ -1169,21 +1169,23 @@ public class Qwen3ASRModel: Module {
         context: String = "",
         language: String? = nil
     ) -> String {
-        let systemContext = context.isEmpty ? "" : context
+        audioPromptHead(context: context)
+            + String(repeating: "<|audio_pad|>", count: numAudioTokens)
+            + audioPromptTail(language: language)
+    }
 
+    func audioPromptHead(context: String = "") -> String {
+        "<|im_start|>system\n\(context)<|im_end|>\n<|im_start|>user\n<|audio_start|>"
+    }
+
+    func audioPromptTail(language: String? = nil) -> String {
         let assistantPrefix: String
         if let langName = normalizeLanguageName(language) {
             assistantPrefix = "language \(langName)<asr_text>"
         } else {
             assistantPrefix = ""
         }
-
-        return "<|im_start|>system\n\(systemContext)<|im_end|>\n"
-            + "<|im_start|>user\n<|audio_start|>"
-            + String(repeating: "<|audio_pad|>", count: numAudioTokens)
-            + "<|audio_end|><|im_end|>\n"
-            + "<|im_start|>assistant\n"
-            + assistantPrefix
+        return "<|audio_end|><|im_end|>\n<|im_start|>assistant\n" + assistantPrefix
     }
 
     public func buildPrompt(
@@ -1552,7 +1554,7 @@ public class Qwen3ASRModel: Module {
                             let tokenText = tokenizer.decode(tokens: [nextToken])
                             if resolvedLanguage == nil {
                                 languagePrefixBuffer += tokenText
-                                let parsed = model.extractLanguage(from: languagePrefixBuffer)
+                                let parsed = Qwen3ASRModel.extractLanguage(from: languagePrefixBuffer)
                                 if let detectedLanguage = parsed.language {
                                     resolvedLanguage = detectedLanguage
                                     if !parsed.text.isEmpty {
@@ -1595,7 +1597,7 @@ public class Qwen3ASRModel: Module {
 
                     // Emit final result
                     let decodedText = tokenizer.decode(tokens: allGeneratedTokens)
-                    let parsed = model.extractLanguage(from: decodedText)
+                    let parsed = Qwen3ASRModel.extractLanguage(from: decodedText)
                     let outputLanguage = resolvedLanguage ?? parsed.language
                     let text = language == nil ? parsed.text : decodedText.trimmingCharacters(in: .whitespacesAndNewlines)
                     let output = STTOutput(

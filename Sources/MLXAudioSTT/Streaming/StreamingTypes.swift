@@ -60,6 +60,9 @@ public struct StreamingConfig: Sendable {
     public var maxDecodeWindows: Int
     /// Whether to run a one-shot decode on each completed 8s window for accuracy
     public var finalizeCompletedWindows: Bool
+    /// Which streaming policy to run. Stable-prefix is for checkpoints trained for it,
+    /// such as Confucius4-R2T2, and is not detectable from the model config.
+    public var policy: StreamingPolicy
 
     public init(
         decodeIntervalSeconds: Double = 1.0,
@@ -74,7 +77,8 @@ public struct StreamingConfig: Sendable {
         minAgreementPasses: Int = 2,
         boundaryMinAgreementPasses: Int = 3,
         maxDecodeWindows: Int = 1,
-        finalizeCompletedWindows: Bool = true
+        finalizeCompletedWindows: Bool = true,
+        policy: StreamingPolicy = .agreement
     ) {
         self.decodeIntervalSeconds = decodeIntervalSeconds
         self.boundaryDecodeIntervalSeconds = boundaryDecodeIntervalSeconds
@@ -89,7 +93,17 @@ public struct StreamingConfig: Sendable {
         self.boundaryMinAgreementPasses = boundaryMinAgreementPasses
         self.maxDecodeWindows = maxDecodeWindows
         self.finalizeCompletedWindows = finalizeCompletedWindows
+        self.policy = policy
     }
+}
+
+/// How a streaming session turns partial hypotheses into committed text.
+public enum StreamingPolicy: Sendable {
+    /// Re-decode the pending window and promote tokens that stay stable across passes.
+    case agreement
+    /// Confucius4-R2T2 style: re-prompt the model with the committed text every chunk and
+    /// commit only the stable prefix it returns. Only `language` is read from `StreamingConfig`.
+    case stablePrefix
 }
 
 // MARK: - Transcription Events
