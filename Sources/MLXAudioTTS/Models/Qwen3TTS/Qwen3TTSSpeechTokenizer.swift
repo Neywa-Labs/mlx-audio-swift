@@ -891,6 +891,8 @@ final class Qwen3TTSSpeechTokenizerDecoder: Module {
     let config: Qwen3TTSTokenizerDecoderConfig
     let totalUpsample: Int
     var transformerCache: [any KVCache]?
+    /// The reference codes the streaming state was primed with (nil after a reset).
+    private var primedReferenceCodes: MLXArray?
 
     @ModuleInfo(key: "pre_transformer") var preTransformer: DecoderTransformer
     @ModuleInfo var quantizer: SplitResidualVectorQuantizer
@@ -949,6 +951,7 @@ final class Qwen3TTSSpeechTokenizerDecoder: Module {
 
     func resetStreamingState() {
         transformerCache = nil
+        primedReferenceCodes = nil
         preConv.resetState()
         for layer in upsample {
             layer.resetState()
@@ -976,6 +979,20 @@ final class Qwen3TTSSpeechTokenizerDecoder: Module {
         let time = referenceCodes.dim(2)
         guard contextSize > 0, time > 0 else { return }
         _ = streamingStep(referenceCodes[0..., 0..., max(0, time - contextSize)...])
+    }
+
+    /// Gets the streaming state ready for a sentence: reset, and primed when there are reference codes.
+    /// Does nothing when it is already primed with the same codes, so priming can be done ahead of time.
+    func prepareStreamingState(referenceCodes: MLXArray?) {
+        if let referenceCodes, let primedReferenceCodes,
+            arrayEqual(referenceCodes, primedReferenceCodes).item(Bool.self)
+        {
+            return
+        }
+        resetStreamingState()
+        guard let referenceCodes else { return }
+        primeStreamingState(referenceCodes: referenceCodes)
+        primedReferenceCodes = referenceCodes
     }
 
     /// Incrementally decode only new codec tokens.

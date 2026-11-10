@@ -131,6 +131,8 @@ for try await event in model.generateStream(
 
 `streamingInterval` controls how frequently chunks are emitted in seconds. Smaller values reduce latency but increase overhead.
 
+With a reference (`refAudio` and `refText`), the decoder is primed with the reference codes when a stream ends, so the next sentence with the same reference starts sooner. The stream finishes a little later.
+
 ## Batch Generation
 
 The Python reference exposes batched multi-sequence generation. The current Swift port does not yet have a public batch-generation API, so issue multiple `generate(...)` or `generateStream(...)` calls at the application layer when you need concurrency.
