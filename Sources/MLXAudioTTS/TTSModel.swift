@@ -403,6 +403,12 @@ public enum TTS {
                 pretrained: { try await Zonos2Model.fromPretrained($0, cache: $1) },
                 local: { folder, _ in try await Zonos2Model.fromModelDirectory(folder, cache: source.cache) }
             )
+        case "zonos3", "zonos3_mini":
+            return try await load(
+                source, modelType: resolvedType,
+                pretrained: { try await Zonos3Model.fromPretrained($0, cache: $1, hfToken: hfToken) },
+                local: { folder, _ in try await Zonos3Model.fromModelDirectory(folder) }
+            )
         default:
             throw TTSModelError.unsupportedModelType(resolvedType)
         }
@@ -477,6 +483,7 @@ public enum TTS {
 
     private static func inferModelType(from modelRepo: String) -> String? {
         let lower = modelRepo.lowercased()
+        if lower.contains("zonos3") { return "zonos3" }
         if lower.contains("zonos2") { return "zonos2" }
         if lower.contains("ming-3.0-tts-tiny") { return "lingv3_tts" }
         if lower.contains("ming"), lower.contains("tts"), lower.contains("0.5b") {
