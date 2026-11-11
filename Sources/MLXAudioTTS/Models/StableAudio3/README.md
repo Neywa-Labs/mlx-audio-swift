@@ -28,4 +28,4 @@ Loading through `TTS.loadModel` also works. That path has no duration option, so
 
 ## License
 
-The Swift code in this folder follows Stability AI's MIT-licensed `optimized/mlx` code, see [LICENSE](LICENSE). The weights are under the [Stability AI Community License](https://stability.ai/community-license-agreement) and the text encoder under the [Gemma Terms of Use](https://ai.google.dev/gemma/terms). Read both before you use or redistribute the model.
+The Swift code in this folder follows Stability AI's MIT-licensed `optimized/mlx` code, Copyright (c) 2026 Stability AI. The weights are under the [Stability AI Community License](https://stability.ai/community-license-agreement) and the text encoder under the [Gemma Terms of Use](https://ai.google.dev/gemma/terms). Read both before you use or redistribute the model.
