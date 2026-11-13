@@ -142,6 +142,7 @@ let package = Package(
                 "Models/VoxCPM/README.md",
                 "Models/VoxCPM2/README.md",
                 "Models/Zonos2/README.md",
+                "Models/Zonos3/README.md",
                 "Models/VibeVoiceTTS/README.md",
                 "Models/VoxtralTTS/README.md",
                 "Models/StyleTTS2/KittenTTS/README.md",
