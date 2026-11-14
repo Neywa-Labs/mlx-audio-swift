@@ -237,6 +237,58 @@ struct SOVTranscribeTests {
     @Test func modelTypeIsInferredFromRepositoryName() {
         #expect(STT.inferModelType(from: "nativ-community/SOV-Transcribe-1-4bit") == "sovereignai_transcribe")
     }
+
+    @Test(arguments: [0, -1], [8, 1500])
+    func promptMustLeaveRoomForGeneration(contextRemaining: Int, sourcePositions: Int) async throws {
+        let dir = try directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try writeSOVTokenizer(dir)
+        let tokenizer = try await loadSTTTokenizer(from: dir)
+        var config = try tinySOVConfig()
+        // The 8-position encoder cannot accept 3000 mel frames, so these cases
+        // also verify that context rejection happens before audio encoding.
+        config.audioConfig.maxSourcePositions = sourcePositions
+        let probe = SOVTranscribeModel(config)
+        probe.tokenizer = tokenizer
+        let promptTokens = probe.promptIds(instruction: "a", audioTokens: config.tokensPerWindow).count
+        config.textConfig.maxPositionEmbeddings = promptTokens + contextRemaining
+        let model = SOVTranscribeModel(config)
+        model.tokenizer = tokenizer
+        let audio = MLXArray.zeros([16000])
+
+        let inputError = #expect(throws: STTError.self) {
+            try model.prepareInputs(audio, instruction: "a")
+        }
+        #expect(
+            inputError?.localizedDescription
+                == "Invalid input: Audio and prompt exceed the model context window")
+
+        var events = 0
+        let streamError = await #expect(throws: STTError.self) {
+            for try await _ in model.generateStream(audio: audio, prompt: "a") { events += 1 }
+        }
+        #expect(
+            streamError?.localizedDescription
+                == "Invalid input: Audio and prompt exceed the model context window")
+        #expect(events == 0)
+    }
+
+    @Test func generationUsesTheRemainingContext() async throws {
+        let dir = try directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try writeTinySOV(dir)
+        let probe = try await SOVTranscribeModel.fromModelDirectory(dir)
+        var config = probe.config
+        let promptTokens = probe.promptIds(instruction: "a", audioTokens: config.tokensPerWindow).count
+        config.textConfig.maxPositionEmbeddings = promptTokens + 1
+        try JSONEncoder().encode(config).write(to: dir.appendingPathComponent("config.json"))
+        let model = try await SOVTranscribeModel.fromModelDirectory(dir)
+        let result = model.generate(
+            audio: .zeros([16000]), generationParameters: .init(maxTokens: 3), prompt: "a")
+        #expect(result.text == "a")
+        #expect(result.generationTokens == 1)
+        #expect(result.promptTokens == promptTokens)
+    }
 }
 
 @Suite(.serialized)

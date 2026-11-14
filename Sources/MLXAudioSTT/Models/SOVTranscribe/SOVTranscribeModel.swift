@@ -93,10 +93,14 @@ public final class SOVTranscribeModel: Module, STTGenerationModel {
         return concatenated(outputs, axis: 0)
     }
 
-    func prepareInputs(_ audio: MLXArray, instruction: String) -> (ids: [Int], embeddings: MLXArray)
+    func prepareInputs(_ audio: MLXArray, instruction: String) throws -> (ids: [Int], embeddings: MLXArray)
     {
+        let audioTokens = SOVTranscribeAudio.windowCount(samples: audio.dim(0)) * config.tokensPerWindow
+        let ids = promptIds(instruction: instruction, audioTokens: audioTokens)
+        guard ids.count < config.textConfig.maxPositionEmbeddings else {
+            throw STTError.invalidInput("Audio and prompt exceed the model context window")
+        }
         let features = audioFeatures(audio)
-        let ids = promptIds(instruction: instruction, audioTokens: features.dim(0))
         let idArray = MLXArray(ids.map(Int32.init))
         let isAudio = idArray .== Int32(config.audioTokenId)
         let text = languageModel.embed(
@@ -125,16 +129,21 @@ public final class SOVTranscribeModel: Module, STTGenerationModel {
 
     /// Transcribes `audio` (mono, 16 kHz). `prompt` replaces the default instruction;
     /// `generationParameters.language` and `hotwords` are appended to it.
+    /// The audio and prompt must leave room for at least one generated token.
     public func generate(
         audio: MLXArray, generationParameters: STTGenerateParameters? = nil,
         prompt: String? = nil, hotwords: [String]? = nil, prefillStepSize: Int = 512
     ) -> STTOutput {
         let parameters = generationParameters ?? defaultGenerationParameters
-        return generateImpl(
-            audio: audio, parameters: parameters,
-            instruction: Self.instruction(
-                prompt: prompt, language: parameters.language, hotwords: hotwords),
-            prefillStepSize: prefillStepSize, emit: nil)
+        do {
+            return try generateImpl(
+                audio: audio, parameters: parameters,
+                instruction: Self.instruction(
+                    prompt: prompt, language: parameters.language, hotwords: hotwords),
+                prefillStepSize: prefillStepSize, emit: nil)
+        } catch {
+            preconditionFailure(error.localizedDescription)
+        }
     }
 
     public func generateStream(audio: MLXArray, generationParameters: STTGenerateParameters)
@@ -153,7 +162,7 @@ public final class SOVTranscribeModel: Module, STTGenerationModel {
         let model = UncheckedSendableBox(self)
         let input = UncheckedSendableBox(audio)
         return makeSTTStream { continuation in
-            let result = model.value.generateImpl(
+            let result = try model.value.generateImpl(
                 audio: input.value, parameters: parameters, instruction: instruction,
                 prefillStepSize: prefillStepSize
             ) { continuation.yield(.token($0)) }
@@ -165,7 +174,7 @@ public final class SOVTranscribeModel: Module, STTGenerationModel {
     private func generateImpl(
         audio: MLXArray, parameters p: STTGenerateParameters, instruction: String,
         prefillStepSize: Int, emit: ((String) -> Void)?
-    ) -> STTOutput {
+    ) throws -> STTOutput {
         guard let tokenizer else { preconditionFailure("SOV-Transcribe tokenizer is not loaded") }
         precondition(prefillStepSize > 0 && p.maxTokens >= 0 && p.temperature >= 0)
         precondition(
@@ -174,8 +183,8 @@ public final class SOVTranscribeModel: Module, STTGenerationModel {
             audio.dim(0) <= SOVTranscribeAudio.maximumSamples,
             "SOV-Transcribe-1 supports recordings up to 30 minutes")
         let start = Date()
-        let (ids, embeddings) = prepareInputs(audio, instruction: instruction)
-        let maxTokens = max(0, min(p.maxTokens, config.textConfig.maxPositionEmbeddings - ids.count))
+        let (ids, embeddings) = try prepareInputs(audio, instruction: instruction)
+        let maxTokens = min(p.maxTokens, config.textConfig.maxPositionEmbeddings - ids.count)
         let cache = languageModel.makeCache()
         var logits = MLXArray(0)
         var offset = 0
