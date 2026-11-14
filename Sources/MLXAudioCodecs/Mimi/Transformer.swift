@@ -28,6 +28,7 @@ public struct TransformerConfig {
     public let dimFeedforward: Int
     public let convLayout: Bool
     public let gelu: String
+    public let ropeTraditional: Bool
 
     public init(
         dModel: Int,
@@ -51,7 +52,8 @@ public struct TransformerConfig {
         kvRepeat: Int,
         dimFeedforward: Int,
         convLayout: Bool,
-        gelu: String = "erf"
+        gelu: String = "erf",
+        ropeTraditional: Bool = true
     ) {
         self.dModel = dModel
         self.numHeads = numHeads
@@ -75,6 +77,7 @@ public struct TransformerConfig {
         self.dimFeedforward = dimFeedforward
         self.convLayout = convLayout
         self.gelu = gelu
+        self.ropeTraditional = ropeTraditional
     }
 
     public var headDim: Int { dModel / numHeads }
@@ -129,7 +132,7 @@ public final class Attention: Module {
         self.scale = 1.0 / Float(Double(cfg.headDim).squareRoot())
 
         if cfg.positionalEmbedding == "rope" {
-            self._rope = ModuleInfo(wrappedValue: RoPE(dimensions: cfg.headDim, traditional: true, base: Float(cfg.maxPeriod)))
+            self._rope = ModuleInfo(wrappedValue: RoPE(dimensions: cfg.headDim, traditional: cfg.ropeTraditional, base: Float(cfg.maxPeriod)))
         } else {
             self._rope = ModuleInfo(wrappedValue: nil)
         }
