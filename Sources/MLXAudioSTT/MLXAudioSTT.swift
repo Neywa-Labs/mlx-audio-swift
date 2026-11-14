@@ -95,6 +95,9 @@ public enum STT {
             let config = try JSONSerialization.jsonObject(with: Data(contentsOf: resolvedDirectory.appendingPathComponent("config.json"))) as? [String: Any]
             guard config?["audio_channels"] != nil, config?["speech_vocab_size"] != nil else { throw STTModelError.unsupportedModelType(resolved) }
             return try await MiMoASRModel.fromModelDirectory(resolvedDirectory, cache: cache)
+        case "sovereignai_transcribe", "sov_transcribe":
+            if let directory { return try await SOVTranscribeModel.fromModelDirectory(directory) }
+            return try await SOVTranscribeModel.fromPretrained(modelRepo, cache: cache)
         case "qwen2_audio":
             if let directory { return try await Qwen2AudioModel.fromModelDirectory(directory) }
             return try await Qwen2AudioModel.fromPretrained(modelRepo, cache: cache)
@@ -197,6 +200,9 @@ public enum STT {
         }
         if lower.contains("mega-asr") || lower.contains("mega_asr") {
             return "mega_asr"
+        }
+        if lower.contains("sov-transcribe") || lower.contains("sovereignai_transcribe") {
+            return "sovereignai_transcribe"
         }
         if lower.contains("qwen2-audio") || lower.contains("qwen2_audio") { return "qwen2_audio" }
         if lower.contains("qwen3-asr") || lower.contains("qwen3_asr") {
