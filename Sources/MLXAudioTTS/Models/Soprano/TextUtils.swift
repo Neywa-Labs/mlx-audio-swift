@@ -171,6 +171,38 @@ private func expandNumSuffix(_ match: String) -> String {
     return "\(digit) \(suffixes[suffix] ?? "")"
 }
 
+/// Readings follow Soprano's reference normalizer ("3:30" -> "3 30", "9:05" -> "9 oh 5",
+/// "3:00" -> "3 o'clock"); the number step speaks the digits.
+private func expandTime(_ match: String) -> String {
+    let parts = match.split(separator: ":").map(String.init)
+    let hours = parts[0]
+    var minutes = parts[1]
+    if parts.count == 2 {
+        if minutes == "00" {
+            let hour = Int(hours) ?? 0
+            if hour == 0 { return "0" }
+            if hour > 12 { return "\(hours) hundred" }
+            return "\(hours) o'clock"
+        }
+        if minutes.hasPrefix("0") { minutes = "oh \(minutes.dropFirst())" }
+        return "\(hours) \(minutes)"
+    }
+    var seconds = parts[2]
+    if minutes == "00" {
+        minutes = "oh oh"
+    } else if minutes.hasPrefix("0") {
+        minutes = "oh \(minutes.dropFirst())"
+    }
+    let secondsParts = seconds.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false)
+    if secondsParts[0] == "00" {
+        // Keep the zero before a fraction for the decimal step.
+        seconds = secondsParts.count > 1 ? "0.\(secondsParts[1])" : ""
+    } else if seconds.hasPrefix("0") {
+        seconds = "oh \(seconds.dropFirst())"
+    }
+    return "\(hours) \(minutes) \(seconds)".trimmingCharacters(in: .whitespaces)
+}
+
 private func expandDollars(_ match: String) -> String {
     // Remove $ and commas
     let cleaned = match.replacingOccurrences(of: ",", with: "")
@@ -270,6 +302,18 @@ private func normalizeNumbers(_ text: String) -> String {
             if let matchRange = Range(match.range, in: result) {
                 let matchStr = String(result[matchRange])
                 result.replaceSubrange(matchRange, with: matchStr.replacingOccurrences(of: ",", with: ""))
+            }
+        }
+    }
+
+    // Times, before ":" becomes "." in the special character step
+    if let regex = try? NSRegularExpression(pattern: "\\d\\d?:\\d\\d(?::\\d\\d(?:\\.\\d+)?)?", options: []) {
+        let range = NSRange(result.startIndex..., in: result)
+        let matches = regex.matches(in: result, range: range).reversed()
+        for match in matches {
+            if let matchRange = Range(match.range, in: result) {
+                let matchStr = String(result[matchRange])
+                result.replaceSubrange(matchRange, with: expandTime(matchStr))
             }
         }
     }
