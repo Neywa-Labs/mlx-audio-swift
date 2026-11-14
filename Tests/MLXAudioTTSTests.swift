@@ -2352,6 +2352,76 @@ struct BreezeTTSTests {
 }
 
 
+@Suite("Orpheus decode")
+struct OrpheusDecodeTests {
+    @Test func windowedDecodeReturnsEachFrameOnce() {
+        let numFrames = 70
+        let frames = MLXArray((0..<numFrames).map { Int32($0) }).expandedDimensions(axis: 0)
+        let layers = [
+            frames,
+            MLXArray.zeros([1, numFrames * 2], dtype: .int32),
+            MLXArray.zeros([1, numFrames * 4], dtype: .int32),
+        ]
+
+        let audio = llamaDecodeWindowed(layers: layers, samplesPerFrame: 3) { window in
+            repeated(window[0], count: 3, axis: 1).expandedDimensions(axis: -1)
+        }
+
+        let expected = (0..<numFrames).flatMap { Array(repeating: Int32($0), count: 3) }
+        #expect(audio.asArray(Int32.self) == expected)
+    }
+
+    @Test func promptsWithoutAVoiceUseTaraUnlessCloning() {
+        #expect(orpheusVoicePrompts(["One.", "Two."], voice: nil, cloning: false) == ["tara: One.", "tara: Two."])
+        #expect(orpheusVoicePrompts(["One."], voice: "leo", cloning: false) == ["leo: One."])
+        #expect(orpheusVoicePrompts(["One."], voice: nil, cloning: true) == ["One."])
+    }
+
+    @Test func longTextSplitsAtSentenceEnds() {
+        let paragraph = (0..<40)
+            .map { "Sentence number \($0) walks on down the long road home." }
+            .joined(separator: " ")
+
+        let segments = orpheusSplitLongSegment(paragraph)
+
+        #expect(segments.count > 1)
+        #expect(segments.allSatisfy { $0.count <= orpheusSegmentMaxChars && $0.hasSuffix(".") })
+        #expect(segments.joined(separator: " ") == paragraph)
+    }
+
+    @Test func runOfShortSentencesIsSplitBySentenceCount() {
+        let dialogue = Array(repeating: "No. Why not? Because!", count: 9).joined(separator: " ")
+
+        let segments = orpheusSplitLongSegment(dialogue)
+
+        #expect(segments.map { $0.filter { ".!?".contains($0) }.count } == [8, 8, 8, 3])
+        #expect(segments.joined(separator: " ") == dialogue)
+    }
+
+    @Test func sentenceLongerThanASegmentIsSplitAtAComma() {
+        let sentence = Array(repeating: "the road went on over the hills", count: 15).joined(separator: ", ") + "."
+
+        let segments = orpheusSplitLongSegment(sentence)
+
+        #expect(segments.count > 1)
+        #expect(segments.allSatisfy { $0.count <= orpheusSegmentMaxChars })
+        #expect(segments.dropLast().allSatisfy { $0.hasSuffix(",") })
+        #expect(segments.joined(separator: " ") == sentence)
+    }
+
+    @Test(arguments: [
+        (Array(repeating: "word", count: 150).joined(separator: " "), " "),
+        (String(repeating: "a", count: 700), ""),
+    ])
+    func textWithoutSentenceEndsStillFitsTheSegmentSize(text: String, joiner: String) {
+        let segments = orpheusSplitLongSegment(text)
+
+        #expect(segments.count > 1)
+        #expect(segments.allSatisfy { $0.count <= orpheusSegmentMaxChars })
+        #expect(segments.joined(separator: joiner) == text)
+    }
+}
+
 // MARK: - Kokoro TTS Tests
 
 private let kokoroConfigJSON = """

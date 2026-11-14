@@ -36,6 +36,79 @@ public typealias LlamaTTSGeneration = AudioGeneration
 
 // MARK: - SNAC Audio Codec Functions
 
+let orpheusDecodeWindowFrames = 32
+let orpheusDecodeContextFrames = 2
+let orpheusSegmentMaxChars = 300
+let orpheusSegmentMaxSentences = 8
+let orpheusMinMaxTokens = 1200
+let orpheusMaxTokensPerTextToken = 80
+let orpheusDefaultVoice = "tara"
+let orpheusSentenceEnd = try! NSRegularExpression(pattern: #"[.!?]["')\]]*\s+|[。！？]"#)
+let orpheusClauseEnd = try! NSRegularExpression(pattern: #"[,;:]\s+|[，；：、]"#)
+let orpheusWhitespace = try! NSRegularExpression(pattern: #"\s+"#)
+
+func orpheusLastCut(_ pattern: NSRegularExpression, in window: String, maxChars: Int, limit: Int? = nil) -> Int {
+    let cuts = pattern.matches(in: window, range: NSRange(window.startIndex..., in: window)).compactMap { match -> Int? in
+        let head = window[..<Range(match.range, in: window)!.upperBound]
+        let trimmed = head.trimmingCharacters(in: .whitespacesAndNewlines).count
+        return trimmed <= maxChars ? head.count : nil
+    }
+    return cuts.prefix(limit ?? cuts.count).last ?? 0
+}
+
+func orpheusVoicePrompts(_ prompts: [String], voice: String?, cloning: Bool) -> [String] {
+    guard let voice = voice ?? (cloning ? nil : orpheusDefaultVoice) else { return prompts }
+    return prompts.map { "\(voice): \($0)" }
+}
+
+/// Split text into pieces of at most `maxChars` and `maxSentences`, at sentence ends where it can.
+func orpheusSplitLongSegment(
+    _ text: String,
+    maxChars: Int = orpheusSegmentMaxChars,
+    maxSentences: Int = orpheusSegmentMaxSentences
+) -> [String] {
+    var segments: [String] = []
+    var rest = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    while rest.count > maxChars
+        || orpheusSentenceEnd.numberOfMatches(in: rest, range: NSRange(rest.startIndex..., in: rest)) >= maxSentences {
+        let window = String(rest.prefix(maxChars + 1))
+        var cut = orpheusLastCut(orpheusSentenceEnd, in: window, maxChars: maxChars, limit: maxSentences)
+        if cut == 0 { cut = orpheusLastCut(orpheusClauseEnd, in: window, maxChars: maxChars) }
+        if cut == 0 { cut = orpheusLastCut(orpheusWhitespace, in: window, maxChars: maxChars) }
+        if cut == 0 { cut = maxChars }
+        segments.append(rest.prefix(cut).trimmingCharacters(in: .whitespacesAndNewlines))
+        rest = rest.dropFirst(cut).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    if !rest.isEmpty {
+        segments.append(rest)
+    }
+    return segments
+}
+
+/// Decode frames a window at a time, keeping only each window's own samples.
+func llamaDecodeWindowed(
+    layers: [MLXArray],
+    samplesPerFrame: Int,
+    decode: ([MLXArray]) -> MLXArray
+) -> MLXArray {
+    let numFrames = layers[0].dim(1)
+    var chunks: [MLXArray] = []
+    for start in stride(from: 0, to: numFrames, by: orpheusDecodeWindowFrames) {
+        let end = min(start + orpheusDecodeWindowFrames, numFrames)
+        let first = max(0, start - orpheusDecodeContextFrames)
+        let last = min(numFrames, end + orpheusDecodeContextFrames)
+        let window = layers.enumerated().map { index, layer in
+            layer[0..., (first << index)..<(last << index)]
+        }
+        let audio = decode(window).squeezed()
+        let chunk = audio[((start - first) * samplesPerFrame)..<((end - first) * samplesPerFrame)]
+        eval(chunk)
+        Memory.clearCache()
+        chunks.append(chunk)
+    }
+    return concatenated(chunks, axis: 0)
+}
+
 /// Decode SNAC audio codes to waveform.
 func llamaDecodeAudioFromCodes(codeList: [Int], snacModel: SNAC) -> MLXArray {
     var layer1: [Int] = []
@@ -62,9 +135,11 @@ func llamaDecodeAudioFromCodes(codeList: [Int], snacModel: SNAC) -> MLXArray {
         MLXArray(layer3).expandedDimensions(axis: 0)
     ]
 
-    // SNAC decode returns [batch, channels, samples] - squeeze batch and channel dims
-    let audioHat = snacModel.decode(codes).squeezed()
-    return audioHat
+    return llamaDecodeWindowed(
+        layers: codes,
+        samplesPerFrame: snacModel.hopLength * snacModel.vqStrides[0],
+        decode: snacModel.decode
+    )
 }
 
 /// Encode audio waveform to SNAC codes.
@@ -468,10 +543,7 @@ public class LlamaTTSModel: Module, KVCacheDimensionProvider, SpeechGenerationMo
         }
 
         // Apply voice prefix if provided
-        var modifiedPrompts = prompts
-        if let voice = voice {
-            modifiedPrompts = prompts.map { "\(voice): \($0)" }
-        }
+        let modifiedPrompts = orpheusVoicePrompts(prompts, voice: voice, cloning: audioInputIds != nil)
 
         // Define special tokens
         let startToken = MLXArray([Int32(OrpheusTokens.startOfHuman)]).expandedDimensions(axis: 0)
@@ -571,7 +643,7 @@ public class LlamaTTSModel: Module, KVCacheDimensionProvider, SpeechGenerationMo
 
     public var defaultGenerationParameters: GenerateParameters {
         GenerateParameters(
-            maxTokens: 1200,
+            maxTokens: nil,
             temperature: 0.6,
             topP: 0.8,
             repetitionPenalty: 1.3,
@@ -644,6 +716,107 @@ public class LlamaTTSModel: Module, KVCacheDimensionProvider, SpeechGenerationMo
 
     // MARK: - Generation
 
+    private struct SegmentOutput {
+        let audio: MLXArray
+        let promptTokenCount: Int
+        let tokenCount: Int
+        let prefillTime: TimeInterval
+        let generateTime: TimeInterval
+    }
+
+    private func generateSegment(
+        prompt: String,
+        voice: String?,
+        refAudio: MaterializedArray?,
+        refText: String?,
+        cache: [KVCache],
+        snacModel: SNAC,
+        parameters: GenerateParameters,
+        onToken: (Int) -> Void = { _ in }
+    ) throws -> SegmentOutput {
+        let (inputIds, _) = prepareInputIds(
+            prompts: [prompt],
+            voice: voice,
+            refAudio: refAudio,
+            refText: refText
+        )
+
+        let sampler = parameters.sampler()
+        var processor = parameters.processor()
+        processor?.prompt(inputIds.squeezed(axis: 0))
+
+        var generatedTokens = inputIds.squeezed(axis: 0).asArray(Int32.self)
+
+        let maxTokens = parameters.maxTokens ?? max(
+            orpheusMinMaxTokens,
+            orpheusMaxTokensPerTextToken * tokenizer!.encode(text: prompt).count
+        )
+        var reachedEndOfSpeech = false
+        var tokenCount = 0
+
+        let startTime = Date()
+        var logits = self(inputIds, cache: cache)
+        let prefillTime = Date().timeIntervalSince(startTime)
+        let generateStartTime = Date()
+
+        for i in 0..<maxTokens {
+            try Task.checkCancellation()
+            let tokenValue: Int = autoreleasepool {
+                var lastLogits = logits[0..., -1, 0...]
+                lastLogits = processor?.process(logits: lastLogits) ?? lastLogits
+
+                let nextToken = sampler.sample(logits: lastLogits)
+                processor?.didSample(token: nextToken)
+
+                let value = nextToken.item(Int.self)
+
+                if value != OrpheusTokens.endOfSpeech {
+                    logits = self(nextToken.reshaped([1, 1]), cache: cache)
+                    eval(logits)
+                }
+
+                return value
+            }
+
+            tokenCount += 1
+            onToken(tokenValue)
+
+            if tokenValue == OrpheusTokens.endOfSpeech {
+                reachedEndOfSpeech = true
+                break
+            }
+
+            generatedTokens.append(Int32(tokenValue))
+
+            if i % 50 == 0 {
+                Memory.clearCache()
+            }
+        }
+
+        if !reachedEndOfSpeech {
+            print("Orpheus reached maxTokens (\(maxTokens)) before the end of speech, so the audio is cut short.")
+        }
+
+        Memory.clearCache()
+        try Task.checkCancellation()
+        let generateTime = Date().timeIntervalSince(generateStartTime)
+
+        let codeLists = parseOutput(MLXArray(generatedTokens).expandedDimensions(axis: 0))
+        guard let codeList = codeLists.first, !codeList.isEmpty else {
+            throw LlamaTTSError.generationFailed("No audio codes generated")
+        }
+
+        let audio = llamaDecodeAudioFromCodes(codeList: codeList, snacModel: snacModel)
+        audio.eval()
+        return SegmentOutput(
+            audio: audio,
+            promptTokenCount: inputIds.shape[1],
+            tokenCount: tokenCount,
+            prefillTime: prefillTime,
+            generateTime: generateTime
+        )
+    }
+
     /// Generate audio from text.
     ///
     /// - Parameters:
@@ -661,7 +834,7 @@ public class LlamaTTSModel: Module, KVCacheDimensionProvider, SpeechGenerationMo
         refText: String? = nil,
         cache: TTSGenerationCache? = nil,
         parameters: GenerateParameters = GenerateParameters(
-            maxTokens: 1200,
+            maxTokens: nil,
             temperature: 0.6,
             topP: 0.8,
             repetitionPenalty: 1.3,
@@ -682,77 +855,20 @@ public class LlamaTTSModel: Module, KVCacheDimensionProvider, SpeechGenerationMo
             let prompt = text.replacingOccurrences(of: "\\n", with: "\n")
                 .replacingOccurrences(of: "\\t", with: "\t")
 
-            let (inputIds, _) = prepareInputIds(
-                prompts: [prompt],
-                voice: voice,
-                refAudio: refAudio,
-                refText: refText
-            )
-
-            // Create sampler and processor from parameters
-            let sampler = parameters.sampler()
-            var processor = parameters.processor()
-
-            // Initialize prompt tokens for processor
-            let promptTokens = inputIds.squeezed(axis: 0)
-            processor?.prompt(promptTokens)
-
-            var generatedTokens: [Int32] = []
-            let promptTokensList = inputIds.squeezed(axis: 0).asArray(Int32.self)
-            generatedTokens.append(contentsOf: promptTokensList)
-
-            let maxTokens = parameters.maxTokens ?? 1200
-
-            // Prefill: process the prompt
-            var logits = self(inputIds, cache: cache)
-
-            // Generate tokens
-            for i in 0..<maxTokens {
-                try Task.checkCancellation()
-                let tokenValue: Int = autoreleasepool {
-                    var lastLogits = logits[0..., -1, 0...]
-                    lastLogits = processor?.process(logits: lastLogits) ?? lastLogits
-
-                    let nextToken = sampler.sample(logits: lastLogits)
-                    processor?.didSample(token: nextToken)
-
-                    let value = nextToken.item(Int.self)
-
-                    if value != OrpheusTokens.endOfSpeech {
-                        let nextTokenExpanded = nextToken.reshaped([1, 1])
-                        logits = self(nextTokenExpanded, cache: cache)
-                        eval(logits)
-                    }
-
-                    return value
-                }
-
-                if tokenValue == OrpheusTokens.endOfSpeech {
-                    break
-                }
-
-                generatedTokens.append(Int32(tokenValue))
-
-                // Periodically clear GPU cache
-                if i % 50 == 0 {
-                    Memory.clearCache()
-                }
+            var chunks: [MLXArray] = []
+            for (index, segment) in orpheusSplitLongSegment(prompt).enumerated() {
+                let output = try generateSegment(
+                    prompt: segment,
+                    voice: voice,
+                    refAudio: refAudio,
+                    refText: refText,
+                    cache: index == 0 ? cache : makeCache(),
+                    snacModel: snacModel,
+                    parameters: parameters
+                )
+                chunks.append(output.audio)
             }
-
-            Memory.clearCache()
-            try Task.checkCancellation()
-
-            let allTokens = MLXArray(generatedTokens).expandedDimensions(axis: 0)
-
-            // Parse output to audio codes
-            let codeLists = parseOutput(allTokens)
-
-            guard let codeList = codeLists.first, !codeList.isEmpty else {
-                throw LlamaTTSError.generationFailed("No audio codes generated")
-            }
-
-            // Decode audio using SNAC
-            let audio = llamaDecodeAudioFromCodes(codeList: codeList, snacModel: snacModel)
+            let audio = concatenated(chunks, axis: 0)
             audio.eval()
 
             Memory.clearCache()
@@ -779,7 +895,7 @@ public class LlamaTTSModel: Module, KVCacheDimensionProvider, SpeechGenerationMo
         refText: String? = nil,
         cache: TTSGenerationCache? = nil,
         parameters: GenerateParameters = GenerateParameters(
-            maxTokens: 1200,
+            maxTokens: nil,
             temperature: 0.6,
             topP: 0.8,
             repetitionPenalty: 1.3,
@@ -807,90 +923,35 @@ public class LlamaTTSModel: Module, KVCacheDimensionProvider, SpeechGenerationMo
                     let prompt = text.replacingOccurrences(of: "\\n", with: "\n")
                         .replacingOccurrences(of: "\\t", with: "\t")
 
-                    let (inputIds, _) = self.prepareInputIds(
-                        prompts: [prompt],
-                        voice: voice,
-                        refAudio: refAudio,
-                        refText: refText
-                    )
-
-                    let sampler = parameters.sampler()
-                    var processor = parameters.processor()
-
-                    let promptTokens = inputIds.squeezed(axis: 0)
-                    processor?.prompt(promptTokens)
-
-                    var generatedTokens: [Int32] = []
-                    let promptTokensList = inputIds.squeezed(axis: 0).asArray(Int32.self)
-                    generatedTokens.append(contentsOf: promptTokensList)
-
-                    let maxTokens = parameters.maxTokens ?? 1200
-
-                    let startTime = Date()
-
-                    // Prefill
-                    var tokenCount: Int = 0
-                    var logits = self(inputIds, cache: cache)
-                    let prefillTime = Date().timeIntervalSince(startTime)
-
-                    let generateStartTime = Date()
-
-                    // Generate tokens
-                    for i in 0..<maxTokens {
-                        try Task.checkCancellation()
-
-                        let tokenValue: Int = autoreleasepool {
-                            var lastLogits = logits[0..., -1, 0...]
-                            lastLogits = processor?.process(logits: lastLogits) ?? lastLogits
-
-                            let nextToken = sampler.sample(logits: lastLogits)
-                            processor?.didSample(token: nextToken)
-
-                            let value = nextToken.item(Int.self)
-
-                            if value != OrpheusTokens.endOfSpeech {
-                                let nextTokenExpanded = nextToken.reshaped([1, 1])
-                                logits = self(nextTokenExpanded, cache: cache)
-                                eval(logits)
-                            }
-
-                            return value
-                        }
-
-                        tokenCount += 1
-                        continuation.yield(.token(tokenValue))
-
-                        if tokenValue == OrpheusTokens.endOfSpeech {
-                            break
-                        }
-
-                        generatedTokens.append(Int32(tokenValue))
-
-                        if i % 50 == 0 {
-                            Memory.clearCache()
-                        }
+                    var chunks: [MLXArray] = []
+                    var promptTokenCount = 0
+                    var tokenCount = 0
+                    var prefillTime: TimeInterval = 0
+                    var generateTime: TimeInterval = 0
+                    for (index, segment) in orpheusSplitLongSegment(prompt).enumerated() {
+                        let output = try self.generateSegment(
+                            prompt: segment,
+                            voice: voice,
+                            refAudio: refAudio,
+                            refText: refText,
+                            cache: index == 0 ? cache : self.makeCache(),
+                            snacModel: snacModel,
+                            parameters: parameters
+                        ) { continuation.yield(.token($0)) }
+                        chunks.append(output.audio)
+                        promptTokenCount += output.promptTokenCount
+                        tokenCount += output.tokenCount
+                        prefillTime += output.prefillTime
+                        generateTime += output.generateTime
                     }
-
-                    try Task.checkCancellation()
-                    let generateTime = Date().timeIntervalSince(generateStartTime)
-
-                    let allTokens = MLXArray(generatedTokens).expandedDimensions(axis: 0)
-
-                    // Parse and decode audio
-                    let codeLists = self.parseOutput(allTokens)
-
-                    guard let codeList = codeLists.first, !codeList.isEmpty else {
-                        throw LlamaTTSError.generationFailed("No audio codes generated")
-                    }
-
-                    let audio = llamaDecodeAudioFromCodes(codeList: codeList, snacModel: snacModel)
+                    let audio = concatenated(chunks, axis: 0)
                     audio.eval()
 
                     Memory.clearCache()
 
                     // Yield completion info
                     let info = LlamaTTSGenerationInfo(
-                        promptTokenCount: inputIds.shape[1],
+                        promptTokenCount: promptTokenCount,
                         generationTokenCount: tokenCount,
                         prefillTime: prefillTime,
                         generateTime: generateTime,
