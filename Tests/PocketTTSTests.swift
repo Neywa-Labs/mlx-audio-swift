@@ -50,6 +50,50 @@ struct PocketTTSTests {
         return folder
     }
 
+    /// One token per character, with a space kept on the character after it, as SentencePiece
+    /// keeps it on the next word.
+    private func makeCharacterTokenizer(for texts: [String]) async throws -> PocketTTSSentencePieceTokenizer {
+        var characters: [String] = []
+        for character in texts.joined() where !character.isWhitespace && !characters.contains(String(character)) {
+            characters.append(String(character))
+        }
+        let pieces = [["<unk>", "0"]] + characters.flatMap { [[$0, "-1"], ["▁" + $0, "-1"]] }
+        let vocab = pieces.map { #"["\#($0[0])",\#($0[1])]"# }.joined(separator: ",")
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let json = #"{"model":{"type":"Unigram","unk_id":0,"vocab":[\#(vocab)]}}"#
+        try Data(json.utf8).write(to: folder.appendingPathComponent("tokenizer.json"))
+        return try await PocketTTSSentencePieceTokenizer(nBins: pieces.count, modelFolder: folder)
+    }
+
+    @Test(arguments: [
+        "It costs 3.14 dollars today.",
+        "We paid $822.95 for the new chairs.",
+        "Read the guide at www.kyutai.org first.",
+        "Write to jo@icloud.com before noon.",
+        "Bring a tool, e.g. a hammer or a saw.",
+        "We start at 4 p.m. on the first day.",
+    ])
+    func splitKeepsPeriodsInsideNumbersAndWords(_ text: String) async throws {
+        let tokenizer = try await makeCharacterTokenizer(for: [text])
+        #expect(try PocketTTSTextUtils.splitIntoBestSentences(tokenizer, text) == [text])
+    }
+
+    @Test func splitDoesNotEndAChunkAfterATitle() async throws {
+        let text = "We will meet the new doctor at noon, Dr. Miller from the clinic."
+        let tokenizer = try await makeCharacterTokenizer(for: [text])
+        #expect(try PocketTTSTextUtils.splitIntoBestSentences(tokenizer, text) == [text])
+    }
+
+    @Test func splitStillEndsSentencesAtPeriods() async throws {
+        let text = "I counted to 3. 14 people were there. They all stayed until the end."
+        let tokenizer = try await makeCharacterTokenizer(for: [text])
+        #expect(
+            try PocketTTSTextUtils.splitIntoBestSentences(tokenizer, text)
+                == ["I counted to 3. 14 people were there.", "They all stayed until the end."])
+    }
+
     @Test func flatAndNestedConfigsPreserveDimensionsAndDefaults() throws {
         let flat = try decode(configuration())
         #expect(flat.flowLM.transformer.hiddenScale == 2.5)
@@ -151,6 +195,16 @@ struct PocketTTSTests {
         }
         let actual = mlp(MLXArray(inputs).reshaped([1, 8]))
         #expect(MLX.max(MLX.abs(actual - MLXArray(expected))).item(Float.self) < 1e-6)
+    }
+
+    @Test(arguments: [
+        ("I wouldn\u{2019}t go.", "I wouldn't go."),
+        ("It\u{2019}s \u{2018}done\u{2019} now, really.", "It's 'done' now, really."),
+        ("I can't stay here tonight.", "I can't stay here tonight."),
+    ])
+    func promptReplacesCurlyApostrophes(text: String, expected: String) throws {
+        let (prompt, _) = try PocketTTSTextUtils.prepareTextPrompt(text)
+        #expect(prompt.trimmingCharacters(in: .whitespaces) == expected)
     }
 
     // The tiny decoder has one upsampling stage. These fixed Sequential names

@@ -71,7 +71,7 @@ public extension SpeechGenerationModel {
         )
         return proxyAudioStream(stream, extract: {
             guard case .audio(let samples) = $0 else { return nil }
-            return samples.asArray(Float.self)
+            return monoSamples(samples)
         })
     }
 
@@ -136,6 +136,12 @@ public extension SpeechGenerationModel {
             generationParameters: generationParameters
         )
     }
+}
+
+private func monoSamples(_ audio: MaterializedArray) -> [Float] {
+    let values = audio.asArray(Float.self)
+    guard audio.shape.count == 2, audio.shape[1] == 2 else { return values }
+    return stride(from: 0, to: values.count, by: 2).map { (values[$0] + values[$0 + 1]) / 2 }
 }
 
 private func proxyAudioStream<T: Sendable, U: Sendable>(

@@ -360,6 +360,13 @@ public enum TTS {
                 modelType: resolvedType,
                 pretrained: { try await SparkModel.fromPretrained($0, cache: $1) }
             )
+        case "stable_audio_3":
+            return try await load(
+                source,
+                modelType: resolvedType,
+                pretrained: { try await StableAudio3Model.fromPretrained($0, cache: $1) },
+                local: { modelDir, _ in try await StableAudio3Model.fromModelDirectory(modelDir) }
+            )
         case "tada", "tada_tts":
             return try await load(source, modelType: resolvedType,
                 pretrained: { try await TADAModel.fromPretrained($0, cache: $1, hfToken: hfToken) },
@@ -506,6 +513,7 @@ public enum TTS {
         }
         // Repo names are hyphenated (e.g. "Irodori-TTS-600M-…"); match the bare name.
         if lower.contains("rumik") { return "rumik_oss" }
+        if lower.contains("stable-audio-3") { return "stable_audio_3" }
         if lower.contains("spark") {
             return "spark"
         }

@@ -847,7 +847,9 @@ final class Qwen3TTSSpeechTokenizerEncoder: Module {
             maxSeqLen: config.maxPositionEmbeddings,
             kvRepeat: config.numAttentionHeads / config.numKeyValueHeads,
             dimFeedforward: config.intermediateSize,
-            convLayout: true
+            convLayout: true,
+            // Hugging Face layout (rotate-half), unlike Kyutai's interleaved Mimi checkpoints.
+            ropeTraditional: false
         )
         let projectedTransformer = MLXAudioCodecs.ProjectedTransformer(
             cfg: transformerCfg,
