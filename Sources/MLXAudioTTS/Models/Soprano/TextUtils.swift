@@ -403,6 +403,9 @@ private let specialCharacters: [(pattern: String, replacement: String)] = [
     ("\\+", " plus "),
     ("\\\\", " backslash "),
     ("~", " about "),
+    // Before "<", ">" and "=", which would read "<=" as "less than equals".
+    ("<=", " less than or equal to "),
+    (">=", " greater than or equal to "),
     ("<", " less than "),
     (">", " greater than "),
     ("=", " equals "),

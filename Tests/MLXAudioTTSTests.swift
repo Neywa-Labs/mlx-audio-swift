@@ -1504,6 +1504,13 @@ struct SopranoTextCleaningTests {
         #expect(cleanTextForSoprano("I have 5 cats") == "i have five cats")
     }
 
+    @Test func comparisonOperatorsReadAsWholeOperators() {
+        #expect(cleanTextForSoprano("x <= 5") == "x less than or equal to five")
+        #expect(cleanTextForSoprano("y>=10.") == "y greater than or equal to ten.")
+        #expect(cleanTextForSoprano("a < b") == "a less than b")
+        #expect(cleanTextForSoprano("1 = 1") == "one equals one")
+    }
+
     @Test func timesAreSpoken() {
         #expect(cleanTextForSoprano("Meet at 3:30 tomorrow.") == "meet at three thirty tomorrow.")
         #expect(cleanTextForSoprano("At 9:05 we eat.") == "at nine oh five we eat.")
