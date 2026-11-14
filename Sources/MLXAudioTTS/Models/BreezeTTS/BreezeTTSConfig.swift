@@ -114,6 +114,19 @@ public struct BreezeTextEncoderConfig: Decodable, Sendable {
     var slidingWindowPattern: Int
     var eoiTokenIndex: Int
     var layerTypes: [String]
+    var ropeParameters: [String: RopeParameters]
+
+    struct RopeParameters: Decodable, Sendable {
+        var ropeType: String?
+        var ropeTheta: Float?
+        var factor: Float?
+
+        enum CodingKeys: String, CodingKey {
+            case ropeType = "rope_type"
+            case ropeTheta = "rope_theta"
+            case factor
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case vocabSize = "vocab_size"
@@ -131,6 +144,7 @@ public struct BreezeTextEncoderConfig: Decodable, Sendable {
         case privateSlidingWindowPattern = "_sliding_window_pattern"
         case eoiTokenIndex = "eoi_token_index"
         case layerTypes = "layer_types"
+        case ropeParameters = "rope_parameters"
     }
 
     public init(from decoder: Decoder) throws {
@@ -159,6 +173,7 @@ public struct BreezeTextEncoderConfig: Decodable, Sendable {
                 ($0 + 1).isMultiple(of: pattern) ? "full_attention" : "sliding_attention"
             }
         }
+        ropeParameters = try c.decodeIfPresent([String: RopeParameters].self, forKey: .ropeParameters) ?? [:]
     }
 }
 
