@@ -197,6 +197,16 @@ struct PocketTTSTests {
         #expect(MLX.max(MLX.abs(actual - MLXArray(expected))).item(Float.self) < 1e-6)
     }
 
+    @Test(arguments: [
+        ("I wouldn\u{2019}t go.", "I wouldn't go."),
+        ("It\u{2019}s \u{2018}done\u{2019} now, really.", "It's 'done' now, really."),
+        ("I can't stay here tonight.", "I can't stay here tonight."),
+    ])
+    func promptReplacesCurlyApostrophes(text: String, expected: String) throws {
+        let (prompt, _) = try PocketTTSTextUtils.prepareTextPrompt(text)
+        #expect(prompt.trimmingCharacters(in: .whitespaces) == expected)
+    }
+
     // The tiny decoder has one upsampling stage. These fixed Sequential names
     // are independent of the runtime mapping and follow the reference layout.
     private func upstreamWeights(_ weights: [String: MLXArray]) -> [String: MLXArray] {
