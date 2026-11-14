@@ -441,8 +441,9 @@ private let asciiPunctuation: [Character: String] = [
 
 private func convertToASCII(_ text: String) -> String {
     let punctuated = text.map { asciiPunctuation[$0] ?? String($0) }.joined()
-    // Normalize unicode and convert to ASCII
-    let normalized = punctuated.precomposedStringWithCanonicalMapping
+    // Decompose so an accented letter keeps its base letter once the combining
+    // mark is filtered out ("caf\u{00E9}" -> "cafe"), as the Python port's NFKD does.
+    let normalized = punctuated.decomposedStringWithCanonicalMapping
     return normalized.unicodeScalars
         .filter { $0.isASCII }
         .map { String($0) }

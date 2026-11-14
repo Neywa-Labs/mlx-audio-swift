@@ -1503,6 +1503,12 @@ struct SopranoTextCleaningTests {
         #expect(cleanTextForSoprano("He said \u{201C}hi\u{201D}.") == "he said hi.")
     }
 
+    @Test func accentedLettersKeepTheirBaseLetter() {
+        #expect(cleanTextForSoprano("We met at the caf\u{00E9} on the corner.") == "we met at the cafe on the corner.")
+        #expect(cleanTextForSoprano("A na\u{00EF}ve plan") == "a naive plan")
+        #expect(cleanTextForSoprano("Jos\u{00E9} ordered cr\u{00E8}me br\u{00FB}l\u{00E9}e.") == "jose ordered creme brulee.")
+    }
+
     @Test func decimalNumbersReadWithPoint() {
         #expect(cleanTextForSoprano("It is 3.14 approx.") == "it is three point fourteen approx.")
         #expect(cleanTextForSoprano("I have 2.5 liters") == "i have two point five liters")
