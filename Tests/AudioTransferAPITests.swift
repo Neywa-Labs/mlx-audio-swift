@@ -218,6 +218,19 @@ struct AudioTransferAPITests {
         }
         #expect(emptyChunks == [[]])
     }
+
+    @MainActor
+    @Test func sampleStreamDownmixesStereo() async throws {
+        let model: any SpeechGenerationModel = TransferAPIProbe()
+        let stereo = MLXArray([Float(1), 3, 0.5, 0.25]).reshaped([2, 2]).materialized()
+        var chunks: [[Float]] = []
+        for try await chunk in model.generateSamplesStream(
+            text: "test", voice: nil, refAudio: stereo, refText: nil, language: nil)
+        {
+            chunks.append(chunk)
+        }
+        #expect(chunks == [[2, 0.375]])
+    }
 }
 
 private func referenceSamples(count: Int = 4_000) -> [Float] {
