@@ -42,7 +42,7 @@ public enum PocketTTSTextUtils {
             if endTokens.contains(tok) {
                 previousWasEnd = true
             } else {
-                if previousWasEnd {
+                if previousWasEnd && !isInnerPunctuation(tokens, idx, tokenizer) {
                     endOfSentenceIndices.append(idx)
                 }
                 previousWasEnd = false
@@ -82,5 +82,32 @@ public enum PocketTTSTextUtils {
             chunks.append(current.trimmingCharacters(in: .whitespaces))
         }
         return chunks
+    }
+
+    // Abbreviations that always precede a name or an example, never end a sentence.
+    static let titles: Set<String> = ["Mr.", "Mrs.", "Ms.", "Dr.", "Prof.", "Rev.", "vs.", "e.g.", "i.e."]
+
+    /// Returns true when the punctuation right before `start` does not end a sentence: it is
+    /// followed by a letter or digit without a space ("3.14", "4 p.m.", "www.kyutai.org",
+    /// "jo@icloud.com"), or it ends a title that precedes a name ("Dr. Miller", "e.g. this"),
+    /// as in pocket-tts.
+    ///
+    /// Only the tokens next to the boundary are decoded. Decoding the period together with the
+    /// next token keeps the space between them: in "I counted to 3. 14 people were there." the
+    /// period ends a sentence.
+    static func isInnerPunctuation(
+        _ tokens: [Int],
+        _ start: Int,
+        _ tokenizer: PocketTTSSentencePieceTokenizer
+    ) -> Bool {
+        let after = Array(tokenizer.decode(Array(tokens[(start - 1)...start])))
+        if after.count >= 2, after[1].isLetter || after[1].isNumber {
+            return true
+        }
+        let windowStart = max(0, start - 6)
+        let words = tokenizer.decode(Array(tokens[windowStart..<start])).split(whereSeparator: \.isWhitespace)
+        guard let last = words.last else { return false }
+        // The first word of the window may be cut, unless the window starts the text.
+        return titles.contains(String(last)) && (words.count > 1 || windowStart == 0)
     }
 }
