@@ -1496,6 +1496,13 @@ struct SopranoTextCleaningTests {
         #expect(cleanTextForSoprano("25M") == "twenty five million")
     }
 
+    @Test func dashesAndCurlyQuotesBecomeASCII() {
+        #expect(cleanTextForSoprano("Wait\u{2014}what?") == "wait - what?")
+        #expect(cleanTextForSoprano("I don\u{2019}t know.") == "i don't know.")
+        #expect(cleanTextForSoprano("It\u{2018}s pages 10\u{2013}20.") == "it's pages ten-twenty.")
+        #expect(cleanTextForSoprano("He said \u{201C}hi\u{201D}.") == "he said hi.")
+    }
+
     @Test func decimalNumbersReadWithPoint() {
         #expect(cleanTextForSoprano("It is 3.14 approx.") == "it is three point fourteen approx.")
         #expect(cleanTextForSoprano("I have 2.5 liters") == "i have two point five liters")

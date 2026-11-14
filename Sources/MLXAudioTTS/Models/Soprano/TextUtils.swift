@@ -423,9 +423,23 @@ private func expandSpecialCharacters(_ text: String) -> String {
 
 // MARK: - Text Cleaning
 
+// Punctuation with no ASCII form, which the filter below would drop: the words
+// around a dash would run together ("wait\u{2014}what" -> "waitwhat") and a curly
+// apostrophe would leave "dont". Soprano's reference normalizer turns the em dash
+// into " - " and maps the others with unidecode, as the Python port does.
+private let asciiPunctuation: [Character: String] = [
+    "\u{2014}": " - ",
+    "\u{2013}": "-",
+    "\u{2018}": "'",
+    "\u{2019}": "'",
+    "\u{201C}": "\"",
+    "\u{201D}": "\"",
+]
+
 private func convertToASCII(_ text: String) -> String {
+    let punctuated = text.map { asciiPunctuation[$0] ?? String($0) }.joined()
     // Normalize unicode and convert to ASCII
-    let normalized = text.precomposedStringWithCanonicalMapping
+    let normalized = punctuated.precomposedStringWithCanonicalMapping
     return normalized.unicodeScalars
         .filter { $0.isASCII }
         .map { String($0) }
