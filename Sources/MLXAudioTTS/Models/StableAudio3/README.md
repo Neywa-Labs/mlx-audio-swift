@@ -1,11 +1,12 @@
 # Stable Audio 3
 
-Stable Audio 3 small generates 44.1 kHz stereo audio from a text prompt: sound effects with the `sfx` model and music with the `music` model. Clips can be up to 120 seconds long. Only the small models are supported.
+Stable Audio 3 generates 44.1 kHz stereo audio from a text prompt: small makes sound effects with the `sfx` model and music with the `music` model, up to 120 seconds, and medium up to 380 seconds. The architecture is read from each checkpoint's `config.json`.
 
 ## Supported models
 
 - [mlx-community/stable-audio-3-small-sfx](https://huggingface.co/mlx-community/stable-audio-3-small-sfx)
 - [mlx-community/stable-audio-3-small-music](https://huggingface.co/mlx-community/stable-audio-3-small-music)
+- [mlx-community/stable-audio-3-medium](https://huggingface.co/mlx-community/stable-audio-3-medium)
 
 ## Swift
 

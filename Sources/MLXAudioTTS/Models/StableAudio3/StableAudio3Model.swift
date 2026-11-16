@@ -51,14 +51,18 @@ func stableAudio3SamplingSchedule(steps: Int) -> MLXArray {
     return MLX.where(t .>= 1, ones(like: zeroed), zeroed)
 }
 
-func stableAudio3GuidedVelocity(x: MLXArray, sigma: MLXArray, conditional: MLXArray, unconditional: MLXArray,
-                                cfgScale: Float) -> MLXArray {
+func stableAudio3GuidedVelocity(x input: MLXArray, sigma inputSigma: MLXArray, conditional inputConditional: MLXArray,
+                                unconditional inputUnconditional: MLXArray, cfgScale: Float) -> MLXArray {
+    let x = input.asType(.float32)
+    let sigma = inputSigma.asType(.float32)
+    let conditional = inputConditional.asType(.float32)
+    let unconditional = inputUnconditional.asType(.float32)
     let cond = x - sigma * conditional
     let diff = sigma * (unconditional - conditional)
     let norm = sqrt((cond * cond).sum(axes: [-2, -1], keepDims: true))
     let unit = cond / maximum(norm, MLXArray(Float(1e-8)))
     let orthogonal = diff - (diff * unit).sum(axes: [-2, -1], keepDims: true) * unit
-    return (x - (cond + (cfgScale - 1) * orthogonal)) / sigma
+    return ((x - (cond + (cfgScale - 1) * orthogonal)) / sigma).asType(input.dtype)
 }
 
 func stableAudio3PingPong(model: (MLXArray, MLXArray) -> MLXArray, start: MLXArray, sigmas: MLXArray,
@@ -68,7 +72,7 @@ func stableAudio3PingPong(model: (MLXArray, MLXArray) -> MLXArray, start: MLXArr
     let last = sigmas.dim(0) - 2
     for step in 0 ... last {
         let sigma = sigmas[step]
-        let denoised = x - sigma * model(x, sigma.expandedDimensions(axis: 0))
+        let denoised = x - sigma.asType(x.dtype) * model(x, sigma.expandedDimensions(axis: 0))
         if step == last {
             x = denoised
         } else {
@@ -76,20 +80,74 @@ func stableAudio3PingPong(model: (MLXArray, MLXArray) -> MLXArray, start: MLXArr
             let (nextKey, noiseKey) = MLXRandom.split(key: key)
             key = nextKey
             let noise = MLXRandom.normal(x.shape, dtype: x.dtype, key: noiseKey)
-            x = (1 - nextSigma) * denoised + nextSigma * noise
+            x = (1 - nextSigma).asType(x.dtype) * denoised + nextSigma.asType(x.dtype) * noise
         }
         eval(x)
     }
     return x
 }
 
-private struct StableAudio3Configuration: Decodable {
+struct StableAudio3Configuration: Decodable {
+    struct Nested<Config: Decodable>: Decodable {
+        var config: Config
+    }
+
+    struct Multiplier: Decodable {
+        var mult: Double
+    }
+
+    struct AttentionSettings: Decodable {
+        var differential: Bool?
+    }
+
+    struct DiffusionSettings: Decodable {
+        var embedDim: Int
+        var depth: Int
+        var ffKwargs: Multiplier
+        var attnKwargs: AttentionSettings
+    }
+
+    struct DecoderSettings: Decodable {
+        var channels: Int
+        var cMults: [Int]
+        var transformerDepths: [Int]
+        var sinusoidalBlocks: [Int]
+        var convMapping: Bool?
+        var slidingWindow: [Int]?
+    }
+
+    struct PretransformSettings: Decodable {
+        var decoder: Nested<DecoderSettings>
+    }
+
+    struct ModelSettings: Decodable {
+        var diffusion: Nested<DiffusionSettings>
+        var pretransform: Nested<PretransformSettings>
+    }
+
     var sampleRate: Int
     var sampleSize: Int
+    var model: ModelSettings?
 
-    enum CodingKeys: String, CodingKey {
-        case sampleRate = "sample_rate"
-        case sampleSize = "sample_size"
+    static func decoded(from data: Data) throws -> StableAudio3Configuration {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(StableAudio3Configuration.self, from: data)
+    }
+
+    var dit: StableAudio3DiTConfig {
+        guard let settings = model?.diffusion.config else { return .init() }
+        return .init(
+            embedDim: settings.embedDim, depth: settings.depth, ffMult: settings.ffKwargs.mult,
+            differential: settings.attnKwargs.differential ?? false)
+    }
+
+    var decoder: StableAudio3DecoderConfig {
+        guard let settings = model?.pretransform.config.decoder.config else { return .init() }
+        return .init(
+            dim: settings.channels * settings.cMults[0], depth: settings.transformerDepths[0],
+            sinusoidalBlocks: settings.sinusoidalBlocks[0], convMapping: settings.convMapping ?? false,
+            slidingWindow: settings.slidingWindow != nil)
     }
 }
 
@@ -105,12 +163,14 @@ public final class StableAudio3Model: Module, SpeechGenerationModel, @unchecked 
     @ParameterInfo(key: "padding_embedding") var paddingEmbedding: MLXArray
 
     var tokenizer: (any Tokenizer)?
+    var dtype: DType = .float32
 
-    init(sampleRate: Int = 44100, sampleSize: Int = 5_292_032) {
+    init(sampleRate: Int = 44100, sampleSize: Int = 5_292_032, dit ditConfig: StableAudio3DiTConfig = .init(),
+         decoder decoderConfig: StableAudio3DecoderConfig = .init()) {
         self.sampleRate = sampleRate
         self.maxDuration = Double(sampleSize / sampleRate)
-        _dit.wrappedValue = StableAudio3DiT()
-        _decoder.wrappedValue = StableAudio3Decoder()
+        _dit.wrappedValue = StableAudio3DiT(config: ditConfig)
+        _decoder.wrappedValue = StableAudio3Decoder(config: decoderConfig)
         _textEncoder.wrappedValue = StableAudio3TextEncoder()
         _secondsProjection.wrappedValue = Linear(StableAudio3Constants.fourierDim, StableAudio3Constants.conditioningDim)
         _paddingEmbedding.wrappedValue = MLXArray.zeros([StableAudio3Constants.conditioningDim])
@@ -143,14 +203,14 @@ public final class StableAudio3Model: Module, SpeechGenerationModel, @unchecked 
             ids[index] = Int32(token)
         }
         let mask = MLXArray(0 ..< textMaxLength).expandedDimensions(axis: 0) .< tokens.count
-        let hidden = textEncoder(MLXArray(ids).reshaped([1, textMaxLength]), attentionMask: mask).asType(.float32)
-        let keep = mask.expandedDimensions(axis: -1).asType(.float32)
-        return hidden * keep + paddingEmbedding.reshaped([1, 1, -1]) * (1 - keep)
+        let hidden = textEncoder(MLXArray(ids).reshaped([1, textMaxLength]), attentionMask: mask).asType(dtype)
+        let keep = mask.expandedDimensions(axis: -1).asType(dtype)
+        return hidden * keep + paddingEmbedding.reshaped([1, 1, -1]).asType(dtype) * (1 - keep)
     }
 
     func secondsEmbedding(_ seconds: Double) -> MLXArray {
         let wholeSeconds = Foundation.ceil(seconds)
-        return secondsProjection(stableAudio3FourierFeatures(MLXArray([Float(wholeSeconds / secondsMax)])))
+        return secondsProjection(stableAudio3FourierFeatures(MLXArray([Float(wholeSeconds / secondsMax)]))).asType(dtype)
     }
 
     func latentLength(seconds: Double) -> Int {
@@ -191,7 +251,7 @@ public final class StableAudio3Model: Module, SpeechGenerationModel, @unchecked 
         }
 
         let (key, noiseKey) = MLXRandom.split(key: MLXRandom.key(options.seed))
-        let noise = MLXRandom.normal([1, length, StableAudio3Constants.latentChannels], key: noiseKey)
+        let noise = MLXRandom.normal([1, length, StableAudio3Constants.latentChannels], key: noiseKey).asType(dtype)
         return stableAudio3PingPong(
             model: model, start: noise, sigmas: stableAudio3SamplingSchedule(steps: options.steps), key: key)
     }
@@ -208,7 +268,7 @@ public final class StableAudio3Model: Module, SpeechGenerationModel, @unchecked 
         }
         let latents = try sample(text: text, options: options)
         let frames = Int((options.duration * Double(sampleRate)).rounded(.toNearestOrEven))
-        let audio = decoder.decode(latents)[0, ..<frames]
+        let audio = decoder.decode(latents.asType(.float32))[0, ..<frames]
         let waveform = clip(audio, min: -1, max: 1)
         eval(waveform)
         guard !any(isNaN(waveform)).item(Bool.self) else {
@@ -261,8 +321,9 @@ public final class StableAudio3Model: Module, SpeechGenerationModel, @unchecked 
 
     public static func fromModelDirectory(_ directory: URL) async throws -> StableAudio3Model {
         let data = try Data(contentsOf: directory.appendingPathComponent("config.json"))
-        let config = try JSONDecoder().decode(StableAudio3Configuration.self, from: data)
-        let model = StableAudio3Model(sampleRate: config.sampleRate, sampleSize: config.sampleSize)
+        let config = try StableAudio3Configuration.decoded(from: data)
+        let model = StableAudio3Model(
+            sampleRate: config.sampleRate, sampleSize: config.sampleSize, dit: config.dit, decoder: config.decoder)
 
         var weights = sanitize(try MLX.loadArrays(url: directory.appendingPathComponent("model.safetensors")))
         let textDirectory = directory.appendingPathComponent(textEncoderDirectory)
@@ -271,6 +332,7 @@ public final class StableAudio3Model: Module, SpeechGenerationModel, @unchecked 
             weights["text_encoder." + key.dropFirst("model.encoder.".count)] = value
         }
         try model.update(parameters: ModuleParameters.unflattened(weights), verify: .all)
+        model.dtype = model.dit.postprocessConv.weight.dtype
         model.train(false)
         eval(model)
         model.tokenizer = try await AutoTokenizer.from(modelFolder: textDirectory)
