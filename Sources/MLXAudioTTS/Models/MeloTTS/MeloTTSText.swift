@@ -156,6 +156,13 @@ struct MeloEnglishFrontend {
         }
         return result
     }
+    static let ordinalWords = ["one": "first", "two": "second", "three": "third", "five": "fifth", "eight": "eighth", "nine": "ninth", "twelve": "twelfth"]
+    static func ordinal(_ n: Int) -> String {
+        var words = number(n).split(separator: " ").map(String.init)
+        let last = words.removeLast()
+        words.append(ordinalWords[last] ?? (last.hasSuffix("y") ? last.dropLast() + "ieth" : last + "th"))
+        return words.joined(separator: " ")
+    }
     static func normalize(_ text: String) -> String {
         var text = text.lowercased()
         for (from, to) in ["mrs":"missis", "mr":"mister", "dr":"doctor", "st":"saint", "co":"company", "jr":"junior", "maj":"major", "gen":"general", "drs":"doctors", "rev":"reverend", "lt":"lieutenant", "hon":"honorable", "sgt":"sergeant", "capt":"captain", "esq":"esquire", "ltd":"limited", "col":"colonel", "ft":"fort"] {
@@ -167,6 +174,7 @@ struct MeloEnglishFrontend {
             guard let n = Int(p[0]) else { return value }
             return number(n) + " point " + p[1].map { number($0.wholeNumberValue ?? 0) }.joined(separator: " ")
         }
+        text = replacing(text, pattern: #"\d+(st|nd|rd|th)\b"#) { value in Int(value.dropLast(2)).map(ordinal) ?? value }
         return replacing(text, pattern: #"\d+"#) { Int($0).map(number) ?? $0 }
     }
 }

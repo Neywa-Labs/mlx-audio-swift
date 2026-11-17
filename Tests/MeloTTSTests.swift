@@ -55,6 +55,14 @@ struct MeloTTSTests {
         #expect(plain.phoneIDs == [0,1,2,3,4,11,0])
         #expect(plain.tones == [7,7,8,7,9,7,7])
     }
+    @Test func normalizationReadsOrdinals() {
+        #expect(MeloEnglishFrontend.normalize("The 21st century.") == "the twenty first century.")
+        #expect(MeloEnglishFrontend.normalize("2nd place") == "second place")
+        #expect(MeloEnglishFrontend.normalize("the 12th") == "the twelfth")
+        #expect(MeloEnglishFrontend.normalize("the 40th") == "the fortieth")
+        #expect(MeloEnglishFrontend.normalize("the 100th") == "the one hundredth")
+        #expect(MeloEnglishFrontend.normalize("5 stars") == "five stars")
+    }
     @Test func validatesConfigurationsOptionsAndRequiredTensors() throws {
         var c = tinyConfiguration(); try c.validate()
         c.heads = 3
