@@ -141,7 +141,9 @@ struct MeloEnglishFrontend {
     static func number(_ n: Int) -> String {
         if n == 0 { return "zero" }
         if n < 0 { return "minus " + number(-n) }
-        if n >= 1000 { return number(n / 1000) + " thousand" + (n % 1000 == 0 ? "" : " " + number(n % 1000)) }
+        for (scale, name) in [(1_000_000_000_000, "trillion"), (1_000_000_000, "billion"), (1_000_000, "million"), (1000, "thousand")] where n >= scale {
+            return number(n / scale) + " " + name + (n % scale == 0 ? "" : " " + number(n % scale))
+        }
         if n >= 100 { return ones[n / 100] + " hundred" + (n % 100 == 0 ? "" : " " + number(n % 100)) }
         if n < 20 { return ones[n] }
         return ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"][n / 10] + (n % 10 == 0 ? "" : " " + ones[n % 10])

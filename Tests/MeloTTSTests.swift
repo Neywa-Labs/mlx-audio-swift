@@ -31,6 +31,13 @@ struct MeloTTSTests {
         #expect(path.asArray(Float.self) == [1,1,0,0,0,0, 0,0,1,0,0,0, 0,0,0,1,1,1])
         #expect(TTS.resolveModelType(modelRepo: "mlx-community/MeloTTS-English-MLX") == "melotts")
     }
+    @Test func normalizationReadsMillionsAndBillions() {
+        #expect(MeloEnglishFrontend.normalize("2,000,000 people") == "two million people")
+        #expect(MeloEnglishFrontend.normalize("1,500,000") == "one million five hundred thousand")
+        #expect(MeloEnglishFrontend.normalize("1000001") == "one million one")
+        #expect(MeloEnglishFrontend.normalize("3,000,000,000") == "three billion")
+        #expect(MeloEnglishFrontend.normalize("42,000") == "forty two thousand")
+    }
     @Test func phoneStressWordpieceAndBlankAlignment() throws {
         let frontend = MeloEnglishFrontend(vocabulary: ["hello": 7592, "act": 2552, "##iv": 1001, "##ist": 1002, ".": 1012],
             pronunciations: ["hello": ["HH", "AH0", "L", "OW1"], "activist": ["AE1", "K", "T", "IH0", "V", "IH0", "S", "T"]],
