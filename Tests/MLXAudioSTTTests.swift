@@ -55,6 +55,7 @@ import Tokenizers
 
 @testable import MLXAudioCore
 @testable import MLXAudioSTT
+import Tokenizers
 
 private func loadSTTNetworkFixture(sampleRate: Int, maxSamples: Int? = nil) throws -> MLXArray {
     let audioURL = Bundle.module.url(
@@ -2761,6 +2762,35 @@ struct Qwen3ASRHelperTests {
         #expect(prompt.hasPrefix("<|im_start|>system\nPrefer product names over pronouns.<|im_end|>\n"))
         #expect(prompt.contains("<|audio_start|><|audio_pad|><|audio_pad|><|audio_pad|><|audio_end|>"))
         #expect(prompt.hasSuffix("<|im_start|>assistant\nlanguage English<asr_text>"))
+    }
+
+    @Test func qwen3ASREndsGenerationAtTheTokenizersEndTokens() async throws {
+        // A pruned vocabulary (as in Rumble-2-Flash) numbers <|endoftext|> and <|im_end|> differently.
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("qwen3asr-eos-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let special: [(String, Int)] = [("<|endoftext|>", 7), ("<|im_start|>", 8), ("<|im_end|>", 9)]
+        var vocab = ["a": 0, "b": 1, "c": 2]
+        for (token, id) in special { vocab[token] = id }
+        let tokenizer: [String: Any] = [
+            "model": ["type": "BPE", "vocab": vocab, "merges": []],
+            "added_tokens": special.map { ["id": $0.1, "content": $0.0, "special": true] },
+        ]
+        try JSONSerialization.data(withJSONObject: tokenizer)
+            .write(to: directory.appendingPathComponent("tokenizer.json"))
+        let config: [String: Any] = [
+            "tokenizer_class": "Qwen2Tokenizer", "eos_token": "<|im_end|>", "pad_token": "<|endoftext|>",
+        ]
+        try JSONSerialization.data(withJSONObject: config)
+            .write(to: directory.appendingPathComponent("tokenizer_config.json"))
+
+        let model = Qwen3ASRModel(Qwen3ASRConfig())
+        #expect(model.eosTokenIds == [151645, 151643])
+        model.tokenizer = try await AutoTokenizer.from(modelFolder: directory)
+        #expect(model.eosTokenIds == [9, 7])
+        model.tokenizer = nil
+        #expect(model.eosTokenIds == [151645, 151643])
     }
 
     @Test func computeChunkedEncoderWindowLengthsMatchesChunkedOutputs() {

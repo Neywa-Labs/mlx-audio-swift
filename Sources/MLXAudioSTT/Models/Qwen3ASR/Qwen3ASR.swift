@@ -937,7 +937,25 @@ public class Qwen3ASRModel: Module {
     @ModuleInfo(key: "model") var model: Qwen3ASRTextModel
     @ModuleInfo(key: "lm_head") var lmHead: Linear?
 
-    public var tokenizer: Tokenizers.Tokenizer?
+    public var tokenizer: Tokenizers.Tokenizer? {
+        didSet { eosTokenIds = Self.eosTokenIds(for: tokenizer) }
+    }
+
+    /// Token ids that end generation: `<|im_end|>` and `<|endoftext|>` as the loaded tokenizer numbers
+    /// them. Fine-tunes with a pruned vocabulary (Reson8's Rumble-2-Flash) renumber them, so they are not
+    /// fixed; without a tokenizer the ids of the original Qwen3 vocabulary apply.
+    public private(set) var eosTokenIds: [Int] = Qwen3ASRModel.defaultEosTokenIds
+
+    static let defaultEosTokenIds = [151645, 151643]
+
+    static func eosTokenIds(for tokenizer: Tokenizers.Tokenizer?) -> [Int] {
+        guard let tokenizer else { return defaultEosTokenIds }
+        var ids: [Int] = []
+        for id in [tokenizer.convertTokenToId("<|im_end|>"), tokenizer.convertTokenToId("<|endoftext|>"), tokenizer.eosTokenId] {
+            if let id, !ids.contains(id) { ids.append(id) }
+        }
+        return ids.isEmpty ? defaultEosTokenIds : ids
+    }
 
     /// Sample rate expected by the model (16kHz).
     public let sampleRate: Int = 16000
@@ -1227,7 +1245,7 @@ public class Qwen3ASRModel: Module {
             fatalError("Tokenizer not loaded")
         }
 
-        let eosTokenIds = [151645, 151643]
+        let eosTokenIds = self.eosTokenIds
         let prefillStepSize = 2048
 
         let (inputFeatures, featureAttentionMask, numAudioTokens) = preprocessAudio(audio)
@@ -1455,7 +1473,7 @@ public class Qwen3ASRModel: Module {
                     }
 
                     let startTime = Date()
-                    let eosTokenIds = [151645, 151643]
+                    let eosTokenIds = model.eosTokenIds
 
                     // Split audio into chunks
                     let chunks = splitAudioIntoChunks(
