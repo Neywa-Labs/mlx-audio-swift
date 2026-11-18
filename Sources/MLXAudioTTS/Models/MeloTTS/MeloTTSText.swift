@@ -148,6 +148,23 @@ struct MeloEnglishFrontend {
         if n < 20 { return ones[n] }
         return ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"][n / 10] + (n % 10 == 0 ? "" : " " + ones[n % 10])
     }
+    // Singular and plural names of each currency and of its hundredth.
+    static let currencies: [Character: (unit: String, units: String, subunit: String, subunits: String)] = [
+        "$": ("dollar", "dollars", "cent", "cents"), "€": ("euro", "euros", "cent", "cents"),
+        "£": ("pound sterling", "pounds sterling", "penny", "pence"), "¥": ("yen", "yen", "sen", "sen"),
+    ]
+    static func currency(_ value: String) -> String {
+        guard let names = value.first.flatMap({ currencies[$0] }) else { return value }
+        let amount = value.dropFirst().split(separator: ".")
+        // More than two decimals aren't cents: the decimal pass reads the digits, followed by the unit.
+        if amount.count > 1, amount[1].count > 2 { return amount.joined(separator: ".") + " " + names.units }
+        guard let whole = Int(amount[0]) else { return value }
+        let cents = amount.count > 1 ? Int(amount[1].padding(toLength: 2, withPad: "0", startingAt: 0)) ?? 0 : 0
+        var words: [String] = []
+        if whole > 0 { words.append(number(whole) + " " + (whole == 1 ? names.unit : names.units)) }
+        if cents > 0 { words.append(number(cents) + " " + (cents == 1 ? names.subunit : names.subunits)) }
+        return words.isEmpty ? "zero " + names.units : words.joined(separator: " ")
+    }
     static func replacing(_ text: String, pattern: String, replacement: (String) -> String) -> String {
         let regex = try! NSRegularExpression(pattern: pattern)
         var result = text
@@ -169,6 +186,7 @@ struct MeloEnglishFrontend {
             text = replacing(text, pattern: "\\b" + from + "\\.") { _ in to }
         }
         text = replacing(text, pattern: #"\d{1,3}(,\d{3})+"#) { $0.replacingOccurrences(of: ",", with: "") }
+        text = replacing(text, pattern: #"[$£€¥]\d+(\.\d+)?"#, replacement: currency)
         text = replacing(text, pattern: #"\d+\.\d+"#) { value in
             let p = value.split(separator: ".")
             guard let n = Int(p[0]) else { return value }
