@@ -168,6 +168,7 @@ struct MeloEnglishFrontend {
         for (from, to) in ["mrs":"missis", "mr":"mister", "dr":"doctor", "st":"saint", "co":"company", "jr":"junior", "maj":"major", "gen":"general", "drs":"doctors", "rev":"reverend", "lt":"lieutenant", "hon":"honorable", "sgt":"sergeant", "capt":"captain", "esq":"esquire", "ltd":"limited", "col":"colonel", "ft":"fort"] {
             text = replacing(text, pattern: "\\b" + from + "\\.") { _ in to }
         }
+        text = replacing(text, pattern: #"(?<![\d:])([01]?\d|2[0-3]):[0-5]\d(?![\d:])(\s*[ap]\.?\s?m\b)?"#, replacement: time)
         text = replacing(text, pattern: #"\d{1,3}(,\d{3})+"#) { $0.replacingOccurrences(of: ",", with: "") }
         text = replacing(text, pattern: #"\d+\.\d+"#) { value in
             let p = value.split(separator: ".")
@@ -176,6 +177,18 @@ struct MeloEnglishFrontend {
         }
         text = replacing(text, pattern: #"\d+(st|nd|rd|th)\b"#) { value in Int(value.dropLast(2)).map(ordinal) ?? value }
         return replacing(text, pattern: #"\d+"#) { Int($0).map(number) ?? $0 }
+    }
+    // A clock time, "3:30" or "15:05", with an optional "am", "p.m." and so on. The pattern
+    // in normalize skips a longer time or ratio such as "1:30:45".
+    static func time(_ value: String) -> String {
+        let parts = value.split(separator: ":", maxSplits: 1)
+        guard var hour = Int(parts[0]), let minute = Int(parts[1].prefix(2)) else { return value }
+        let half = parts[1].dropFirst(2).first { $0 == "a" || $0 == "p" }
+        if half != nil { hour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour) }
+        var words = [number(hour)]
+        if minute > 0 { words += (minute < 10 ? ["oh"] : []) + [number(minute)] }
+        if let half { words.append("\(half) m") }
+        return words.joined(separator: " ")
     }
 }
 

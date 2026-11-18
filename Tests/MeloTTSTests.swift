@@ -73,6 +73,14 @@ struct MeloTTSTests {
         #expect(throws: AudioGenerationError.self) { try MeloTTSModel.validate(["x": MLXArray.zeros([3])], shapes: ["x": [2]]) }
         #expect(throws: AudioGenerationError.self) { try MeloEnglishFrontend.validateGRU([:]) }
     }
+    @Test func normalizationReadsClockTimes() {
+        #expect(MeloEnglishFrontend.normalize("Meet at 3:30 pm today.") == "meet at three thirty p m today.")
+        #expect(MeloEnglishFrontend.normalize("9:05 A.M.") == "nine oh five a m.")
+        #expect(MeloEnglishFrontend.normalize("at 12:00am") == "at twelve a m")
+        #expect(MeloEnglishFrontend.normalize("15:45") == "fifteen forty five")
+        #expect(MeloEnglishFrontend.normalize("at 7:00") == "at seven")
+        #expect(MeloEnglishFrontend.normalize("3:30 amazing") == "three thirty amazing")
+    }
     // The reference GPU kernels differ from CPU by 5.01e-5 (BERT), 8.20e-6
     // (attention) and 7.64e-8 (vocoder); CPU goldens retain their tight bounds.
     @Test(arguments: [Device.cpu, Device.gpu])
