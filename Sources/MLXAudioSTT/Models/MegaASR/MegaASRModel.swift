@@ -206,6 +206,7 @@ public final class MegaASRModel: STTGenerationModel {
             preconditionFailure("Mega-ASR tokenizer is not loaded")
         }
         let started = Date()
+        let eosTokenIds = backbone.eosTokenIds
         let language = backbone.normalizeLanguageName(p.language)
         var texts: [String] = []
         var languages: [String?] = []
@@ -262,7 +263,7 @@ public final class MegaASRModel: STTGenerationModel {
                         values .> 0, values / p.repetitionPenalty, values * p.repetitionPenalty)
                 }
                 let token = sampler.sample(logits: scores).item(Int.self)
-                if token == 151645 || token == 151643 { break }
+                if eosTokenIds.contains(token) { break }
                 tokens.append(token)
                 if let emit {
                     let raw = tokenizer.decode(tokens: tokens)
