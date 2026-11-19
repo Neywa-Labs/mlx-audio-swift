@@ -173,7 +173,7 @@ public final class Qwen2AudioModel: Module, STTGenerationModel {
         var emitted = ""
         for _ in 0 ..< p.maxTokens {
             if Task.isCancelled { break }
-            var scores = logits[0, -1, 0...]
+            let scores = logits[0, -1, 0...]
             if p.repetitionPenalty != 1 && !tokens.isEmpty {
                 let recent = Array(Set(tokens.suffix(max(1, p.repetitionContextSize))))
                 let indices = MLXArray(recent.map(Int32.init))

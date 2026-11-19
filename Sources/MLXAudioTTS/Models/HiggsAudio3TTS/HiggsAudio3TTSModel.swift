@@ -144,7 +144,7 @@ public final class HiggsAudio3TTSModel: Module, SpeechGenerationModel, @unchecke
             hidden = try backbone(inputEmbeddings: embedAudio(codes).expandedDimensions(axis: 0), cache: cache)[0, -1, 0...]
         }
         let raw = higgsV3Undelay(stacked(rows, axis: 0))
-        var audio = codec.decode(raw).asType(.float32).reshaped(-1)
+        let audio = codec.decode(raw).asType(.float32).reshaped(-1)
         let nIn = Int(fadeInMilliseconds * Float(sampleRate) / 1000)
         let nOut = Int(fadeOutMilliseconds * Float(sampleRate) / 1000)
         if nIn > 0 && audio.size > nIn { audio[0..<nIn] = audio[0..<nIn] * MLXArray.linspace(0, 1, count: nIn) }

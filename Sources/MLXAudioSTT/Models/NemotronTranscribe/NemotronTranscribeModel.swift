@@ -217,7 +217,7 @@ public final class NemotronTranscribeModel: Module, STTGenerationModel {
         let stops = Set(config.eosTokenIDs)
         for iteration in 0 ..< p.maxTokens {
             if Task.isCancelled { break }
-            var scores = logits[0, -1, 0...]
+            let scores = logits[0, -1, 0...]
             if p.repetitionPenalty != 1 {
                 let history = prepared.tokens + generated
                 let context =

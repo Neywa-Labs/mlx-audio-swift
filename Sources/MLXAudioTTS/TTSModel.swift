@@ -71,10 +71,8 @@ public enum TTS {
         } else {
             do {
                 modelType = try await ModelUtils.resolveModelType(repoID: repoID, hfToken: hfToken, cache: cache)
-            } catch {
+            } catch let error as HTTPClientError where error.code == .responseError && error.statusCode == 404 {
                 // Some complete packages keep metadata beside their language model.
-                guard case let HTTPClientError.responseError(response, _) = error,
-                      response.statusCode == 404 else { throw error }
                 let client: HubClient
                 if let hfToken, !hfToken.isEmpty {
                     client = HubClient(host: HubClient.defaultHost, bearerToken: hfToken, cache: cache)

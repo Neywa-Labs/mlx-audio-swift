@@ -43,8 +43,8 @@ final class VoxtralRealtimeEncoderStreamKVCache {
         if count + n > allocated {
             let block = Self.growthBlock
             let grown = min(capacity, ((count + n + block - 1) / block) * block)
-            var grownKeys = MLXArray.zeros([grown, newKeys.shape[1]], dtype: newKeys.dtype)
-            var grownValues = MLXArray.zeros([grown, newValues.shape[1]], dtype: newValues.dtype)
+            let grownKeys = MLXArray.zeros([grown, newKeys.shape[1]], dtype: newKeys.dtype)
+            let grownValues = MLXArray.zeros([grown, newValues.shape[1]], dtype: newValues.dtype)
             if count > 0, let oldKeys = keys, let oldValues = values {
                 grownKeys[0..<count] = oldKeys[0..<count]
                 grownValues[0..<count] = oldValues[0..<count]

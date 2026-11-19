@@ -132,7 +132,7 @@ public final class HiggsAudio3Model: Module, STTGenerationModel {
         var tokens: [Int] = []
         for _ in 0..<p.maxTokens {
             if Task.isCancelled { break }
-            var scores = logits[0,-1,0...]
+            let scores = logits[0,-1,0...]
             if p.repetitionPenalty != 1, !tokens.isEmpty {
                 let ids = MLXArray(Array(Set(tokens.suffix(max(1,p.repetitionContextSize)))).map(Int32.init))
                 let recent = scores[ids]

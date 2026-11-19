@@ -86,7 +86,7 @@ final class Zonos3SpeakerEncoder {
         let frames = 1 + (count - 400) / 160
         var output = [Float](repeating: 0, count: frames * 80)
         var real = [Double](repeating: 0, count: 512)
-        var imag = real
+        let imag = real
         var fftReal = real
         var fftImag = real
         for t in 0 ..< frames {

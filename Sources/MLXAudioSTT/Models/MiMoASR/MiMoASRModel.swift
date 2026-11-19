@@ -100,7 +100,7 @@ public final class MiMoASRModel: Module, STTGenerationModel {
         let c = config
         let batch = hidden.dim(0)
         let cache: [KVCache] = (0 ..< c.localLayers).map { _ in KVCacheSimple() }
-        var codes = MLXArray.zeros([batch, c.groupSize, c.audioChannels], dtype: .int32)
+        let codes = MLXArray.zeros([batch, c.groupSize, c.audioChannels], dtype: .int32)
         var input = hidden
         for step in 0 ..< (c.groupSize + (c.delayPattern.max() ?? 0)) {
             let h = localTransformer(inputEmbeddings: input, cache: cache)[0..., (-1)..., 0...]
@@ -108,7 +108,7 @@ public final class MiMoASRModel: Module, STTGenerationModel {
             for channel in 0 ..< c.audioChannels {
                 let position = step - c.delayPattern[channel]
                 guard (0 ..< c.groupSize).contains(position) else { continue }
-                var logits = localHeads[channel](h)[0..., -1, 0...]
+                let logits = localHeads[channel](h)[0..., -1, 0...]
                 logits[0..., c.speechEmptyIds[channel]] = MLXArray(-Float.infinity)
                 let token = argMax(logits, axis: -1).asType(.int32)
                 codes[0..., position, channel] = token
@@ -187,7 +187,7 @@ public final class MiMoASRModel: Module, STTGenerationModel {
         let stops: Set<Int> = Set([tokenizer.eosTokenId, c.endOfTurnId].compactMap { $0 })
         for iteration in 0 ..< p.maxTokens {
             if Task.isCancelled { break }
-            var scores = logits[0, -1, 0...]
+            let scores = logits[0, -1, 0...]
             if p.repetitionPenalty != 1 && !generated.isEmpty {
                 let indices = MLXArray(
                     Array(Set(generated.suffix(max(1, p.repetitionContextSize)))).map(Int32.init))

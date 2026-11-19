@@ -1,9 +1,15 @@
-// swift-tools-version:6.2
+// swift-tools-version:6.3
+
 import PackageDescription
 
 let package = Package(
     name: "MLXAudio",
-    platforms: [.macOS(.v14), .iOS(.v17)],
+    platforms: [
+        .macOS(.v14),
+        .iOS(.v17),
+        .tvOS(.v17),
+        .visionOS(.v1)
+    ],
     products: [
         // Core foundation library
         .library(name: "MLXAudioCore", targets: ["MLXAudioCore"]),
@@ -61,8 +67,8 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift.git", .upToNextMajor(from: "0.33.0")),
-        .package(url: "https://github.com/huggingface/swift-transformers.git", .upToNextMajor(from: "1.1.6")),
-        .package(url: "https://github.com/huggingface/swift-huggingface.git", .upToNextMajor(from: "0.8.1")),
+        .package(url: "https://github.com/huggingface/swift-transformers.git", .upToNextMajor(from: "1.4.0")),
+        .package(url: "https://github.com/huggingface/swift-huggingface.git", .upToNextMajor(from: "1.0.1")),
         .package(url: "https://github.com/facebook/zstd.git", from: "1.5.7")
     ],
     targets: [

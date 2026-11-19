@@ -17,7 +17,7 @@ struct MiMoASRPrompt {
         let length = ids.count * c.groupSize
         var rows = MLXArray(c.speechEmptyIds.map(Int32.init)).expandedDimensions(axis: -1)
         rows = broadcast(rows, to: [c.audioChannels, length])
-        var tokens = MLXArray.full([length], values: MLXArray(Int32(-100)))
+        let tokens = MLXArray.full([length], values: MLXArray(Int32(-100)))
         tokens[.stride(by: c.groupSize)] = MLXArray(ids.map(Int32.init))
         return concatenated([tokens.expandedDimensions(axis: 0), rows], axis: 0)
     }
@@ -37,13 +37,13 @@ struct MiMoASRPrompt {
         let c = config
         let codes = paddedCodes(codes)
         let groups = codes.dim(1) / c.groupSize
-        var speech = broadcast(
+        let speech = broadcast(
             MLXArray(c.speechEmptyIds.map(Int32.init)).expandedDimensions(axis: -1),
             to: [c.audioChannels, (groups + 2) * c.groupSize])
         speech[0..., c.groupSize ..< (c.groupSize + codes.dim(1))] = codes
         let tokens =
             [c.startOfSpeechId] + Array(repeating: c.emptyId, count: groups) + [c.endOfSpeechId]
-        var audio = text(tokens)
+        let audio = text(tokens)
         audio[1...] = speech
         func encode(_ text: String) -> [Int] {
             tokenizer.encode(text: text, addSpecialTokens: false)
