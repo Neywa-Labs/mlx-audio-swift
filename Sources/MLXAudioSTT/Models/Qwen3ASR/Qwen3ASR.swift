@@ -951,9 +951,15 @@ public class Qwen3ASRModel: Module {
     static func eosTokenIds(for tokenizer: Tokenizers.Tokenizer?) -> [Int] {
         guard let tokenizer else { return defaultEosTokenIds }
         var ids: [Int] = []
-        for id in [tokenizer.convertTokenToId("<|im_end|>"), tokenizer.convertTokenToId("<|endoftext|>"), tokenizer.eosTokenId] {
-            if let id, !ids.contains(id) { ids.append(id) }
+        // convertTokenToId falls back to the unknown token's id; keep only ids that map back to their token.
+        for token in ["<|im_end|>", "<|endoftext|>"] {
+            if let id = tokenizer.convertTokenToId(token), tokenizer.convertIdToToken(id) == token,
+                !ids.contains(id)
+            {
+                ids.append(id)
+            }
         }
+        if let id = tokenizer.eosTokenId, !ids.contains(id) { ids.append(id) }
         return ids.isEmpty ? defaultEosTokenIds : ids
     }
 
