@@ -407,14 +407,16 @@ public final class Qwen3TTSModel: Module, SpeechGenerationModel, @unchecked Send
         let codeCache = talker.codePredictor.makeCache()
 
         if onAudioChunk != nil {
-            speechTokenizer.decoder.resetStreamingState()
-            if let refCodes {
-                speechTokenizer.decoder.primeStreamingState(referenceCodes: refCodes)
-            }
+            speechTokenizer.decoder.prepareStreamingState(referenceCodes: refCodes)
         }
         defer {
             if onAudioChunk != nil {
                 speechTokenizer.decoder.resetStreamingState()
+                // Priming decodes about 2 s of reference audio. Doing it now, for the next sentence with this
+                // reference, keeps that time out of its first audio.
+                if !Task.isCancelled {
+                    speechTokenizer.decoder.prepareStreamingState(referenceCodes: refCodes)
+                }
             }
         }
 

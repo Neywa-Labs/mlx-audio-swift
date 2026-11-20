@@ -1194,6 +1194,54 @@ struct Qwen3TTSTests {
         }
     }
 
+    @Test func preparedStreamingStateIsOnlyPrimedAgainWhenTheReferenceChanges() async throws {
+        let fixture = try await makeTinyQwen3TTSModel(
+            ttsModelType: "voice_design", includeSpeechEncoder: false)
+        defer { cleanupTemporaryArtifactDirectory(fixture.tokenizerDirectory) }
+        let decoder = try #require(fixture.model.speechTokenizer).decoder
+        let biases = decoder.parameters().flattened()
+            .filter { $0.0.hasSuffix(".bias") }
+            .map { ($0.0, MLXArray.ones($0.1.shape) * 0.01) }
+        decoder.update(parameters: ModuleParameters.unflattened(biases))
+        let reference = MLXRandom.randInt(low: 0, high: 16, [1, 2, 30], key: MLXRandom.key(1)).asType(.int32)
+        let other = MLXRandom.randInt(low: 0, high: 16, [1, 2, 30], key: MLXRandom.key(3)).asType(.int32)
+        let codes = MLXRandom.randInt(low: 0, high: 16, [1, 2, 4], key: MLXRandom.key(2)).asType(.int32)
+        let first = codes[0..., 0..., 0 ..< 2]
+        let second = codes[0..., 0..., 2 ..< 4]
+        func primedSteps(_ primedWith: MLXArray) -> (MLXArray, MLXArray) {
+            decoder.resetStreamingState()
+            decoder.primeStreamingState(referenceCodes: primedWith)
+            let steps = (decoder.streamingStep(first), decoder.streamingStep(second))
+            decoder.resetStreamingState()
+            return steps
+        }
+        let expected = primedSteps(reference)
+
+        // The same codes in a new array leave the state alone: the second step continues from the first.
+        decoder.prepareStreamingState(referenceCodes: reference)
+        #expect(abs(decoder.streamingStep(first) - expected.0).max().item(Float.self) < 1e-4)
+        decoder.prepareStreamingState(referenceCodes: reference + MLXArray(Int32(0)))
+        #expect(abs(decoder.streamingStep(second) - expected.1).max().item(Float.self) < 1e-4)
+
+        // Other codes prime from a clean state.
+        decoder.prepareStreamingState(referenceCodes: other)
+        #expect(abs(decoder.streamingStep(first) - primedSteps(other).0).max().item(Float.self) < 1e-4)
+
+        // A reset forgets the priming.
+        decoder.prepareStreamingState(referenceCodes: reference)
+        decoder.resetStreamingState()
+        decoder.prepareStreamingState(referenceCodes: reference)
+        #expect(abs(decoder.streamingStep(first) - expected.0).max().item(Float.self) < 1e-4)
+
+        // No reference leaves the state empty.
+        decoder.prepareStreamingState(referenceCodes: nil)
+        let unprimed = decoder.streamingStep(first)
+        decoder.resetStreamingState()
+        #expect(abs(unprimed - decoder.streamingStep(first)).max().item(Float.self) < 1e-4)
+        #expect(abs(unprimed - expected.0).max().item(Float.self) > 1e-3)
+        decoder.resetStreamingState()
+    }
+
     @Test func decoderTransformerAttendsWithinSlidingWindow() throws {
         MLXRandom.seed(0)
         let json = """
