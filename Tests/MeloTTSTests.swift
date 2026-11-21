@@ -22,6 +22,17 @@ struct MeloTTSTests {
         #expect(a.size == expected.count)
         #expect(abs(a.reshaped(-1) - MLXArray(expected)).max().item(Float.self) < tolerance)
     }
+    @Test func normalizationReadsCurrency() {
+        #expect(MeloEnglishFrontend.normalize("$5 each.") == "five dollars each.")
+        #expect(MeloEnglishFrontend.normalize("It costs $2.50.") == "it costs two dollars fifty cents.")
+        #expect(MeloEnglishFrontend.normalize("$1") == "one dollar")
+        #expect(MeloEnglishFrontend.normalize("$0.01") == "one cent")
+        #expect(MeloEnglishFrontend.normalize("$1,250") == "one thousand two hundred fifty dollars")
+        #expect(MeloEnglishFrontend.normalize("£3") == "three pounds sterling")
+        #expect(MeloEnglishFrontend.normalize("€2.5") == "two euros fifty cents")
+        #expect(MeloEnglishFrontend.normalize("¥100") == "one hundred yen")
+        #expect(MeloEnglishFrontend.normalize("$1.234") == "one point two three four dollars")
+    }
     @Test func normalizationAndAlignment() throws {
         #expect(MeloEnglishFrontend.normalize("Dr. Smith has 1,234.05 apples!") == "doctor smith has one thousand two hundred thirty four point zero five apples!")
         #expect(MeloEnglishFrontend.normalize("It costs 2.50 now.") == "it costs two point five zero now.")
