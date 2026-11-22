@@ -94,6 +94,32 @@ struct PocketTTSTests {
                 == ["I counted to 3. 14 people were there.", "They all stayed until the end."])
     }
 
+    /// Mimics real Pocket TTS / Phonon SentencePiece vocabularies where standalone "▁" exists
+    /// and "▁." does not, so encoding ".!...?" starts with the standalone metaspace token.
+    private func makeStandaloneMetaspaceTokenizer(for texts: [String]) async throws -> PocketTTSSentencePieceTokenizer {
+        var pieces: [[String]] = [["<unk>", "0"], ["▁", "-1"]]
+        var seen: Set<String> = ["<unk>", "▁"]
+        for character in texts.joined() + ".!?" where !character.isWhitespace {
+            let token = String(character)
+            if seen.insert(token).inserted {
+                pieces.append([token, "-2"])
+            }
+        }
+        let vocab = pieces.map { #"["\#($0[0])",\#($0[1])]"# }.joined(separator: ",")
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let json = #"{"model":{"type":"Unigram","unk_id":0,"vocab":[\#(vocab)]}}"#
+        try Data(json.utf8).write(to: folder.appendingPathComponent("tokenizer.json"))
+        return try await PocketTTSSentencePieceTokenizer(nBins: pieces.count, modelFolder: folder)
+    }
+
+    @Test func splitDoesNotBreakMidSentenceOnStandaloneMetaspace() async throws {
+        let sentence = "Providers that *claim* to be ZDR (400k+ customers) and zero markup."
+        let tokenizer = try await makeStandaloneMetaspaceTokenizer(for: [sentence])
+        #expect(try PocketTTSTextUtils.splitIntoBestSentences(tokenizer, sentence) == [sentence])
+    }
+
     @Test func flatAndNestedConfigsPreserveDimensionsAndDefaults() throws {
         let flat = try decode(configuration())
         #expect(flat.flowLM.transformer.hiddenScale == 2.5)
