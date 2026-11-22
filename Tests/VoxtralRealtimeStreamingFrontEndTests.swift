@@ -86,6 +86,7 @@ struct VoxtralRealtimeStreamingFrontEndTests {
     // See the header: kernel drift across batch shapes, not algorithmic error.
     private static let melTolerance: Float = 1e-3
     private static let convTolerance: Float = 1e-4
+    private static let encoderTolerance: Float = 1e-3
 
     @Test func melStreamMatchesOfflineAcrossIrregularChunks() {
         let filters = VoxtralRealtimeAudio.computeMelFilters().asType(.float32)
@@ -348,9 +349,62 @@ struct VoxtralRealtimeStreamingFrontEndTests {
         #expect(session.tokens.count == offline.generationTokens)
     }
 
+    /// `encodeChunked` and the stream must match one pass under the banded mask, across
+    /// several 64-row window boundaries and the stream cache's compaction.
+    @Test func encoderWindowSlidesAcrossChunkAndStepBoundaries() throws {
+        let fixtureDir = try Self.makeRandomFixture(encoderLayers: 1)
+        defer { try? FileManager.default.removeItem(at: fixtureDir) }
+
+        let model = try VoxtralRealtimeModel.fromDirectory(fixtureDir)
+        let encoder = model.encoder
+        let config = model.config.encoderArgs
+        let rows = 400
+        let convOut = withRandomState(MLXRandom.RandomState(seed: 11)) {
+            MLXRandom.normal([rows, config.dim])
+        }
+
+        let inputs = VoxtralRealtimeEncoderAttentionInputs.build(
+            positions: MLXArray(0..<rows).asType(.int32),
+            seqLen: rows,
+            hasCache: false,
+            cachedLen: 0,
+            cachedOffset: 0,
+            slidingWindow: config.slidingWindow,
+            headDim: config.headDim,
+            ropeTheta: config.ropeTheta,
+            dtype: convOut.dtype
+        )
+        var x = convOut
+        for layer in encoder.transformerLayers {
+            x = layer(x, inputs: inputs, cache: nil).0
+        }
+        let reference = encoder.downsampleAndProject(encoder.transformerNorm(x))
+
+        let chunked = encoder.encodeChunked(convOut)
+        #expect(chunked.shape == reference.shape)
+        #expect(Self.maxAbsDifference(chunked, reference) <= Self.encoderTolerance)
+
+        var state = VoxtralRealtimeStreamEncoderState(
+            layers: encoder.transformerLayers.count, slidingWindow: config.slidingWindow)
+        // One 80 ms step, a single row, most of a window, more than a window.
+        let stepRows = [4, 1, 60, 3, 100, 32]
+        var pieces: [MLXArray] = []
+        var fed = 0
+        var step = 0
+        while fed < rows {
+            let upTo = min(rows, fed + stepRows[step % stepRows.count])
+            pieces.append(encoder.feedIncremental(convOut, startIndex: 0, upTo: upTo, state: &state))
+            fed = upTo
+            step += 1
+        }
+        let streamed = encoder.downsampleAndProject(MLX.concatenated(pieces, axis: 0))
+        #expect(streamed.shape == reference.shape)
+        #expect(Self.maxAbsDifference(streamed, reference) <= Self.encoderTolerance)
+    }
+
     /// With one real encoder transformer layer and enough audio that the conv rows
-    /// cross the 64-frame sliding-window boundary twice, the incremental
-    /// cache-reset path (`feedIncremental`) must reproduce `encodeChunked` exactly.
+    /// cross the 64-frame sliding window twice, the incremental path
+    /// (`feedIncremental`) must reproduce `encodeChunked` exactly.
     @Test func slidingWindowCrossingMatchesOffline() throws {
         let fixtureDir = try Self.makeRandomFixture(encoderLayers: 1)
         defer { try? FileManager.default.removeItem(at: fixtureDir) }

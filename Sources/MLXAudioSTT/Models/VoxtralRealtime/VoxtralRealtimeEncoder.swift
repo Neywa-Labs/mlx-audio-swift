@@ -8,41 +8,53 @@ struct VoxtralRealtimeEncoderKVCache {
     var positionOffset: Int
 }
 
-/// One encoder layer's streaming KV cache. New rows are written into storage that
-/// grows `growthBlock` rows at a time up to `capacity`, and attention reads the
-/// filled prefix. The stream session resets it at each sliding-window boundary, so
-/// it never trims. A class, because MLX updates the storage in place only while
-/// nothing else holds a reference to it.
+/// One encoder layer's streaming KV cache. Rows that leave the window stay in place
+/// until `growthBlock` of them have piled up, then the rest is copied down to row zero.
+/// A class, because MLX updates the storage in place only while nothing else holds a
+/// reference to it.
 final class VoxtralRealtimeEncoderStreamKVCache {
-    private(set) var keys: MLXArray?   // [capacity, n_heads * head_dim]
-    private(set) var values: MLXArray? // [capacity, n_heads * head_dim]
+    private(set) var keys: MLXArray?   // [allocated, n_heads * head_dim]
+    private(set) var values: MLXArray? // [allocated, n_heads * head_dim]
+    /// Rows stored, from storage row zero.
     private(set) var count = 0
-    let capacity: Int
+    /// Absolute position of storage row zero.
+    private(set) var positionOffset = 0
+    let slidingWindow: Int
     static let growthBlock = 256
 
-    init(capacity: Int) {
-        self.capacity = capacity
+    init(slidingWindow: Int) {
+        precondition(slidingWindow > 0)
+        self.slidingWindow = slidingWindow
     }
 
-    func reset() {
-        count = 0
-    }
-
-    /// Writes the new rows after the cached ones and returns all rows so far, the
-    /// same rows in the same order that concatenation gave.
-    func append(keys newKeys: MLXArray, values newValues: MLXArray) -> (keys: MLXArray, values: MLXArray) {
+    /// Writes the new rows and returns the last `slidingWindow - 1 + n` stored rows, with
+    /// the absolute position of the first.
+    func append(keys newKeys: MLXArray, values newValues: MLXArray) -> (
+        keys: MLXArray, values: MLXArray, positionOffset: Int
+    ) {
         let n = newKeys.shape[0]
         precondition(newKeys.ndim == 2 && newKeys.shape == newValues.shape)
-        precondition(count + n <= capacity, "encoder stream cache overflow")
         if let keys, keys.dtype != newKeys.dtype || keys.shape[1] != newKeys.shape[1] {
-            precondition(count == 0, "encoder stream cache changed dtype or width mid-window")
+            precondition(count == 0, "encoder stream cache changed dtype or width mid-stream")
             self.keys = nil
             values = nil
         }
+
+        let live = min(count, slidingWindow - 1)
+        let stale = count - live
+        if stale >= Self.growthBlock {
+            // The ranges may overlap. That is safe: the setter is functional, so the
+            // right-hand side reads the pre-assignment values.
+            keys![0..<live] = keys![stale..<count]
+            values![0..<live] = values![stale..<count]
+            count = live
+            positionOffset += stale
+        }
+
         let allocated = keys?.shape[0] ?? 0
         if count + n > allocated {
             let block = Self.growthBlock
-            let grown = min(capacity, ((count + n + block - 1) / block) * block)
+            let grown = ((count + n + block - 1) / block) * block
             let grownKeys = MLXArray.zeros([grown, newKeys.shape[1]], dtype: newKeys.dtype)
             let grownValues = MLXArray.zeros([grown, newValues.shape[1]], dtype: newValues.dtype)
             if count > 0, let oldKeys = keys, let oldValues = values {
@@ -56,7 +68,9 @@ final class VoxtralRealtimeEncoderStreamKVCache {
         keys![range] = newKeys
         values![range] = newValues
         count += n
-        return (keys![0..<count], values![0..<count])
+
+        let start = max(0, count - (slidingWindow - 1 + n))
+        return (keys![start..<count], values![start..<count], positionOffset + start)
     }
 }
 
@@ -242,9 +256,10 @@ struct VoxtralRealtimeEncoderAttentionInputs {
         // cache, so the mask covers the exact key positions each layer will use.
         var positionOffset = cachedOffset
         var kvLen = cachedLen + seqLen
-        if kvLen > slidingWindow {
-            positionOffset += kvLen - slidingWindow
-            kvLen = slidingWindow
+        let kept = slidingWindow - 1 + seqLen
+        if kvLen > kept {
+            positionOffset += kvLen - kept
+            kvLen = kept
         }
 
         let maskMode: MLXFast.ScaledDotProductAttentionMaskMode
@@ -344,8 +359,8 @@ final class VoxtralRealtimeEncoderAttention: Module {
         streamCache cache: VoxtralRealtimeEncoderStreamKVCache
     ) -> MLXArray {
         let (q, newK, newV) = project(x, inputs: inputs)
-        let (k, v) = cache.append(keys: newK, values: newV)
-        return attend(q: q, k: k, v: v, inputs: inputs)
+        let window = cache.append(keys: newK, values: newV)
+        return attend(q: q, k: window.keys, v: window.values, inputs: inputs)
     }
 
     func callAsFunction(
@@ -363,8 +378,11 @@ final class VoxtralRealtimeEncoderAttention: Module {
             v = MLX.concatenated([cache.values, v], axis: 0)
         }
 
-        if k.shape[0] > slidingWindow {
-            let trim = k.shape[0] - slidingWindow
+        // The first new row still reads the `slidingWindow - 1` rows before it; the
+        // mask in `inputs` narrows the others.
+        let kept = slidingWindow - 1 + q.shape[0]
+        if k.shape[0] > kept {
+            let trim = k.shape[0] - kept
             k = k[trim...]
             v = v[trim...]
             positionOffset += trim
@@ -592,9 +610,8 @@ final class VoxtralRealtimeAudioEncoder: Module {
 
     /// Feed a block of new conv-stem frames at absolute positions `[startPos, startPos+n)`
     /// through the transformer with persistent per-layer KV-caches, returning the
-    /// transformer-normed frames (pre-downsample). The caller keeps the total fed
-    /// length `<= slidingWindow`, so the caches never trim and the result is
-    /// bit-identical to `encodeFull` over the same prefix — see
+    /// transformer-normed frames (pre-downsample). However the stream is cut into blocks,
+    /// the result matches `encodeFull` and `encodeChunked` — see
     /// `VoxtralRealtimeStreamSession`.
     func encodeIncremental(
         _ convBlock: MLXArray,
@@ -604,9 +621,14 @@ final class VoxtralRealtimeAudioEncoder: Module {
         var x = convBlock
         let seqLen = convBlock.shape[0]
         let cachedLen = caches.first?.count ?? 0
+        let cachedOffset = caches.first?.positionOffset ?? 0
         precondition(
-            caches.allSatisfy { $0.count == cachedLen },
+            caches.allSatisfy { $0.count == cachedLen && $0.positionOffset == cachedOffset },
             "encoder layer caches must advance in lockstep to share one attention mask"
+        )
+        precondition(
+            caches.isEmpty || cachedOffset + cachedLen == startPos,
+            "encoder stream frames must be fed in order"
         )
         let positions = MLXArray(startPos..<(startPos + seqLen)).asType(.int32)
         // An empty cache selects the mask a nil cache did before.
@@ -615,7 +637,7 @@ final class VoxtralRealtimeAudioEncoder: Module {
             seqLen: seqLen,
             hasCache: cachedLen > 0,
             cachedLen: cachedLen,
-            cachedOffset: 0,
+            cachedOffset: cachedOffset,
             slidingWindow: config.slidingWindow,
             headDim: config.headDim,
             ropeTheta: config.ropeTheta,
