@@ -37,7 +37,12 @@ public enum PocketTTSTextUtils {
         let cleaned = prepared.trimmingCharacters(in: .whitespaces)
 
         let tokens = tokenizer.encode(cleaned)
-        let endTokens = tokenizer.encode(".!...?")
+        // SentencePiece prepends a metaspace ("▁") before ".!...?". Real Pocket TTS and
+        // Phonon vocabularies lack "▁.", so that leading token encodes as standalone "▁";
+        // keeping it in `endTokens` would treat every standalone "▁" word boundary as a
+        // sentence ending (matching pocket-tts's `_, *end_of_sentence_tokens = ...`).
+        let metaspaceID = tokenizer.tokenizer.tokenID(for: "▁")
+        let endTokens = Set(tokenizer.encode(".!...?").filter { $0 != metaspaceID })
         guard !tokens.isEmpty else { return [cleaned] }
 
         var endOfSentenceIndices: [Int] = [0]
