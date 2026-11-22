@@ -1,11 +1,56 @@
 import Foundation
 import MLX
+import MLXNN
 import Testing
 
 @testable import MLXAudioSTT
 
 @Suite(.serialized)
 struct Qwen3ASREncoderTests {
+    @Test func transformersCheckpointMatchesMLXParameters() throws {
+        let data = Data("""
+        {
+          "audio_config": {"num_mel_bins":16,"encoder_layers":1,"encoder_attention_heads":2,
+            "encoder_ffn_dim":32,"d_model":16,"output_dim":16,"downsample_hidden_size":4,
+            "max_position_embeddings":13},
+          "text_config": {"vocab_size":32,"hidden_size":16,"intermediate_size":32,"num_hidden_layers":1,
+            "num_attention_heads":2,"num_key_value_heads":1,"head_dim":8,
+            "rope_parameters":{"rope_type":"default","rope_theta":8192}}
+        }
+        """.utf8)
+        let config = try JSONDecoder().decode(Qwen3ASRConfig.self, from: data)
+        #expect(config.audioConfig.maxSourcePositions == 13)
+        #expect(config.textConfig.ropeTheta == 8192)
+        let original = Dictionary(uniqueKeysWithValues: Qwen3ASRModel(config).parameters().flattened())
+        var native: [String: MLXArray] = [:]
+        var thinker: [String: MLXArray] = [:]
+        for (key, value) in original {
+            let pytorch = key.contains("conv2d") && key.hasSuffix(".weight")
+                ? value.transposed(0, 3, 1, 2) : value
+            thinker["thinker." + key] = pytorch
+            if key.hasPrefix("audio_tower.proj") {
+                native["model.multi_modal_projector.linear_" + key.dropFirst("audio_tower.proj".count)] = pytorch
+            } else if key.hasPrefix("model.") {
+                native["model.language_model." + key.dropFirst("model.".count)] = pytorch
+            } else {
+                native["model." + key] = pytorch
+            }
+        }
+
+        for checkpoint in [native, thinker, original] {
+            let sanitized = Qwen3ASRModel.sanitize(weights: checkpoint)
+            let copy = Qwen3ASRModel(config)
+            try copy.update(parameters: ModuleParameters.unflattened(sanitized), verify: .all)
+            let actual = Dictionary(uniqueKeysWithValues: copy.parameters().flattened())
+            #expect(Set(actual.keys) == Set(original.keys))
+            for (key, expected) in original {
+                let value = try #require(actual[key])
+                #expect(value.shape == expected.shape)
+                #expect(value.asArray(Float.self) == expected.asArray(Float.self))
+            }
+        }
+    }
+
     private func smallConfig() -> Qwen3ASRConfig {
         Qwen3ASRConfig(
             audioConfig: Qwen3AudioEncoderConfig(

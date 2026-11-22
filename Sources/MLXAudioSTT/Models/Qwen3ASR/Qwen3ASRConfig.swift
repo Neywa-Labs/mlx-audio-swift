@@ -11,6 +11,10 @@ import MLXAudioCore
 // MARK: - Audio Encoder Config
 
 public struct Qwen3AudioEncoderConfig: Codable {
+    private enum TransformersKeys: String, CodingKey {
+        case maxPositionEmbeddings = "max_position_embeddings"
+    }
+
     public var numMelBins: Int
     public var encoderLayers: Int
     public var encoderAttentionHeads: Int
@@ -95,7 +99,9 @@ public struct Qwen3AudioEncoderConfig: Codable {
         activationFunction = try container.decodeIfPresent(String.self, forKey: .activationFunction) ?? "gelu"
         activationDropout = try container.decodeIfPresent(Float.self, forKey: .activationDropout) ?? 0.0
         scaleEmbedding = try container.decodeIfPresent(Bool.self, forKey: .scaleEmbedding) ?? false
-        maxSourcePositions = try container.decodeIfPresent(Int.self, forKey: .maxSourcePositions) ?? 1500
+        let native = try decoder.container(keyedBy: TransformersKeys.self)
+        maxSourcePositions = try container.decodeIfPresent(Int.self, forKey: .maxSourcePositions)
+            ?? native.decodeIfPresent(Int.self, forKey: .maxPositionEmbeddings) ?? 1500
         nWindow = try container.decodeIfPresent(Int.self, forKey: .nWindow) ?? 50
         outputDim = try container.decodeIfPresent(Int.self, forKey: .outputDim) ?? 2048
         nWindowInfer = try container.decodeIfPresent(Int.self, forKey: .nWindowInfer) ?? 800
@@ -107,6 +113,15 @@ public struct Qwen3AudioEncoderConfig: Codable {
 // MARK: - Text Config
 
 public struct Qwen3TextConfig: Codable {
+    private enum TransformersKeys: String, CodingKey {
+        case ropeParameters = "rope_parameters"
+    }
+
+    private struct RopeParameters: Decodable {
+        let theta: Float?
+        enum CodingKeys: String, CodingKey { case theta = "rope_theta" }
+    }
+
     public var modelType: String
     public var vocabSize: Int
     public var hiddenSize: Int
@@ -198,7 +213,9 @@ public struct Qwen3TextConfig: Codable {
         rmsNormEps = try container.decodeIfPresent(Float.self, forKey: .rmsNormEps) ?? 1e-6
         useCache = try container.decodeIfPresent(Bool.self, forKey: .useCache) ?? true
         tieWordEmbeddings = try container.decodeIfPresent(Bool.self, forKey: .tieWordEmbeddings) ?? true
-        ropeTheta = try container.decodeIfPresent(Float.self, forKey: .ropeTheta) ?? 1000000.0
+        let native = try decoder.container(keyedBy: TransformersKeys.self)
+        ropeTheta = try container.decodeIfPresent(Float.self, forKey: .ropeTheta)
+            ?? native.decodeIfPresent(RopeParameters.self, forKey: .ropeParameters)?.theta ?? 1000000.0
         ropeScaling = try container.decodeIfPresent([String: StringAnyCodable].self, forKey: .ropeScaling)
         attentionBias = try container.decodeIfPresent(Bool.self, forKey: .attentionBias) ?? false
         attentionDropout = try container.decodeIfPresent(Float.self, forKey: .attentionDropout) ?? 0.0

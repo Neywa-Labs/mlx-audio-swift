@@ -1634,14 +1634,22 @@ public class Qwen3ASRModel: Module {
 
     public static func sanitize(weights: [String: MLXArray], skipLmHead: Bool = true) -> [String: MLXArray] {
         var sanitized: [String: MLXArray] = [:]
-        let isFormatted = !weights.keys.contains { $0.hasPrefix("thinker.") }
+        let nativeTransformers = weights.keys.contains { $0.hasPrefix("model.audio_tower.") }
+        let pytorchLayout = nativeTransformers || weights.keys.contains { $0.hasPrefix("thinker.") }
 
         for (key, var value) in weights {
             var newKey = key
 
-            // Strip thinker prefix
-            if newKey.hasPrefix("thinker.") {
-                newKey = String(newKey.dropFirst("thinker.".count))
+            if key.hasPrefix("thinker.") {
+                newKey = String(key.dropFirst("thinker.".count))
+            } else if nativeTransformers {
+                if key.hasPrefix("model.audio_tower.") {
+                    newKey = String(key.dropFirst("model.".count))
+                } else if key.hasPrefix("model.language_model.") {
+                    newKey = "model." + key.dropFirst("model.language_model.".count)
+                } else if key.hasPrefix("model.multi_modal_projector.linear_") {
+                    newKey = "audio_tower.proj" + key.dropFirst("model.multi_modal_projector.linear_".count)
+                }
             }
 
             // Skip lm_head for ASR (tied to embeddings)
@@ -1650,7 +1658,7 @@ public class Qwen3ASRModel: Module {
             }
 
             // Transpose Conv2d weights from PyTorch format
-            if !isFormatted && newKey.contains("conv2d") && newKey.contains("weight") && value.ndim == 4 {
+            if pytorchLayout && newKey.contains("conv2d") && newKey.contains("weight") && value.ndim == 4 {
                 value = value.transposed(0, 2, 3, 1)
             }
 

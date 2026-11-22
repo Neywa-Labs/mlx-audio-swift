@@ -1,5 +1,7 @@
 # Qwen3-ASR & Qwen3-ForcedAligner
 
+Native Transformers Qwen3-ASR checkpoints can be loaded directly from their Hugging Face repository or with `Qwen3ASRModel.fromModelDirectory(_:)` after downloading. The loader also accepts Qwen's original thinker-prefixed weights and MLX-converted weights.
+
 Speech-to-text and forced-alignment models based on Qwen3 ASR architecture.
 
 ## Supported Models
