@@ -1362,7 +1362,7 @@ private final class QwenStreamingInferenceSessionCore: @unchecked Sendable, Stre
         let numAudioTokens = audioFeatures.dim(0)
         guard numAudioTokens > 0 else { return }
 
-        let eosTokenIds = [151645, 151643]
+        let eosTokenIds = model.eosTokenIds
         let confirmedCount = params.confirmedTokenIds.count
 
         let inputIds = model.buildPrompt(
@@ -1835,7 +1835,7 @@ private final class QwenStreamingInferenceSessionCore: @unchecked Sendable, Stre
         if Task.isCancelled { return [] }
 
         let numAudioTokens = audioFeatures.dim(0)
-        let eosTokenIds = [151645, 151643]
+        let eosTokenIds = model.eosTokenIds
 
         let inputIds = model.buildPrompt(
             numAudioTokens: numAudioTokens,

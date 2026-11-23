@@ -2763,6 +2763,47 @@ struct Qwen3ASRHelperTests {
         #expect(prompt.hasSuffix("<|im_start|>assistant\nlanguage English<asr_text>"))
     }
 
+    @Test func qwen3ASREndsGenerationAtTheTokenizersEndTokens() async throws {
+        // A pruned vocabulary (as in Rumble-2-Flash) numbers <|endoftext|> and <|im_end|> differently.
+        func loadTokenizer(special: [(String, Int)], unknownToken: String?) async throws -> Tokenizers.Tokenizer {
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("qwen3asr-eos-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            var vocab = ["a": 0, "b": 1, "c": 2]
+            for (token, id) in special { vocab[token] = id }
+            var model: [String: Any] = ["type": "BPE", "vocab": vocab, "merges": []]
+            if let unknownToken {
+                vocab[unknownToken] = 3
+                model["vocab"] = vocab
+                model["unk_token"] = unknownToken
+            }
+            let tokenizer: [String: Any] = [
+                "model": model,
+                "added_tokens": special.map { ["id": $0.1, "content": $0.0, "special": true] },
+            ]
+            try JSONSerialization.data(withJSONObject: tokenizer)
+                .write(to: directory.appendingPathComponent("tokenizer.json"))
+            var config: [String: Any] = ["tokenizer_class": "Qwen2Tokenizer", "eos_token": "<|im_end|>"]
+            if let unknownToken { config["unk_token"] = unknownToken }
+            try JSONSerialization.data(withJSONObject: config)
+                .write(to: directory.appendingPathComponent("tokenizer_config.json"))
+            return try await AutoTokenizer.from(modelFolder: directory)
+        }
+
+        let model = Qwen3ASRModel(Qwen3ASRConfig())
+        #expect(model.eosTokenIds == [151645, 151643])
+        model.tokenizer = try await loadTokenizer(
+            special: [("<|endoftext|>", 7), ("<|im_start|>", 8), ("<|im_end|>", 9)], unknownToken: nil)
+        #expect(model.eosTokenIds == [9, 7])
+        // A missing <|endoftext|> must not turn the unknown token into a stop token.
+        model.tokenizer = try await loadTokenizer(
+            special: [("<|im_start|>", 8), ("<|im_end|>", 9)], unknownToken: "<unk>")
+        #expect(model.eosTokenIds == [9])
+        model.tokenizer = nil
+        #expect(model.eosTokenIds == [151645, 151643])
+    }
+
     @Test func computeChunkedEncoderWindowLengthsMatchesChunkedOutputs() {
         let windowLengths = computeChunkedEncoderWindowLengths(
             chunkFeatureLengthsAfterCnn: Array(repeating: 13, count: 21) + [8],
