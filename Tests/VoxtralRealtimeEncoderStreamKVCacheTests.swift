@@ -4,14 +4,14 @@ import Testing
 
 @testable import MLXAudioSTT
 
-/// The streaming encoder cache must give attention what concatenation gave: the same
-/// rows, in the same order, across irregular appends and window resets.
+/// The streaming encoder cache must return the last `slidingWindow - 1 + n` rows of the
+/// whole stream, across storage growth and compaction.
 struct VoxtralRealtimeEncoderStreamKVCacheTests {
-    @Test func appendsMatchConcatenationAcrossResets() {
+    @Test func appendsMatchASlidingWindowOverTheWholeStream() {
         let width = 3
-        // Past two growth blocks, so the storage grows twice within the first window.
-        let capacity = 600
-        let appendSizes = [1, 100, 200, 7, 1, 291]
+        let slidingWindow = 300
+        // Grows in the first round; later rounds compact, some onto overlapping rows.
+        let appendSizes = [1, 100, 200, 7, 1, 270]
         var nextValue = 0
         func rows(_ count: Int) -> MLXArray {
             let values = (nextValue..<(nextValue + count * width)).map(Float.init)
@@ -19,24 +19,32 @@ struct VoxtralRealtimeEncoderStreamKVCacheTests {
             return MLXArray(values, [count, width])
         }
 
-        let cache = VoxtralRealtimeEncoderStreamKVCache(capacity: capacity)
-        // Each window is filled by irregular appends that sum to `capacity`.
-        for _ in 0..<3 {
-            var reference: MLXArray?
+        let cache = VoxtralRealtimeEncoderStreamKVCache(slidingWindow: slidingWindow)
+        var stream: MLXArray?
+        var total = 0
+        var compactions = 0
+        for _ in 0..<5 {
             for n in appendSizes {
                 let newKeys = rows(n)
+                let offsetBefore = cache.positionOffset
                 let window = cache.append(keys: newKeys, values: newKeys + 0.5)
-                reference = reference.map { MLX.concatenated([$0, newKeys], axis: 0) } ?? newKeys
+                if cache.positionOffset != offsetBefore { compactions += 1 }
+                total += n
+                stream = stream.map { MLX.concatenated([$0, newKeys], axis: 0) } ?? newKeys
 
-                #expect(cache.count == reference!.shape[0])
-                #expect(window.keys.shape == reference!.shape)
-                #expect(MLX.arrayEqual(window.keys, reference!).item(Bool.self))
-                #expect(MLX.arrayEqual(window.values, reference! + 0.5).item(Bool.self))
+                let kept = min(total, slidingWindow - 1 + n)
+                let reference = stream![(total - kept)...]
+                #expect(window.positionOffset == total - kept)
+                #expect(window.keys.shape == reference.shape)
+                #expect(MLX.arrayEqual(window.keys, reference).item(Bool.self))
+                #expect(MLX.arrayEqual(window.values, reference + 0.5).item(Bool.self))
+                #expect(cache.positionOffset + cache.count == total)
             }
-            #expect(cache.count == capacity)
-            #expect(cache.keys?.shape[0] == capacity)
-            cache.reset()
-            #expect(cache.count == 0)
         }
+        #expect(compactions >= 4)
+        // A window, the rows left to pile up before a compaction, and the largest append.
+        let block = VoxtralRealtimeEncoderStreamKVCache.growthBlock
+        let most = slidingWindow - 1 + block - 1 + appendSizes.max()!
+        #expect(cache.keys!.shape[0] <= ((most + block - 1) / block) * block)
     }
 }
