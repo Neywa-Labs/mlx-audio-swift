@@ -805,7 +805,7 @@ public final class OmniVoiceModel: Module, SpeechGenerationModel, @unchecked Sen
         // Build text tokens
         let fullText = combineText(refText: refText, text: text)
         let wrappedText = "<|text_start|>\(fullText)<|text_end|>"
-        let textTokenIds = try tokenizeText(wrappedText)
+        let textTokenIds = try tokenizeTextWithNonverbalTags(wrappedText)
         var textIds = MLXArray(textTokenIds.map { Int32($0) })
         textIds = textIds.reshaped([1, -1])
         textIds = MLX.broadcast(textIds.reshaped([1, 1, -1]), to: [1, numCodebooks, textIds.shape[1]])
@@ -862,6 +862,47 @@ public final class OmniVoiceModel: Module, SpeechGenerationModel, @unchecked Sen
             throw AudioGenerationError.modelNotInitialized("Tokenizer not loaded")
         }
         return tokenizer.encode(text: text, addSpecialTokens: false)
+    }
+
+    /// Nonverbal tags the model was trained on (Python: `_NONVERBAL_PATTERN` in omnivoice.py).
+    static let nonverbalTags: [String] = [
+        "[laughter]", "[sigh]", "[confirmation-en]", "[question-en]", "[question-ah]", "[question-oh]",
+        "[question-ei]", "[question-yi]", "[surprise-ah]", "[surprise-oh]", "[surprise-wa]", "[surprise-yo]",
+        "[dissatisfaction-hnn]",
+    ]
+
+    /// Splits `text` into runs that are each either one nonverbal tag or the text between tags.
+    static func splitNonverbalTags(_ text: String) -> [Substring] {
+        var parts: [Substring] = []
+        var segmentStart = text.startIndex
+        var searchStart = text.startIndex
+        while let open = text[searchStart...].firstIndex(of: "[") {
+            guard let tag = nonverbalTags.first(where: { text[open...].hasPrefix($0) }) else {
+                searchStart = text.index(after: open)
+                continue
+            }
+            let end = text.index(open, offsetBy: tag.count)
+            if segmentStart < open { parts.append(text[segmentStart..<open]) }
+            parts.append(text[open..<end])
+            segmentStart = end
+            searchStart = end
+        }
+        if segmentStart < text.endIndex { parts.append(text[segmentStart...]) }
+        return parts
+    }
+
+    /// Tokenizes each nonverbal tag on its own, as the Python reference does
+    /// (`_tokenize_with_nonverbal_tags`). Tokenized together with the text around it, " [sigh]" becomes
+    /// "Ġ[" + "s" + "igh" + "]" instead of "Ġ" + "[s" + "igh" + "]", and the model reads the tag aloud.
+    static func encodeKeepingNonverbalTags(_ text: String, encode: (String) -> [Int]) -> [Int] {
+        splitNonverbalTags(text).flatMap { encode(String($0)) }
+    }
+
+    private func tokenizeTextWithNonverbalTags(_ text: String) throws -> [Int] {
+        guard let tokenizer else {
+            throw AudioGenerationError.modelNotInitialized("Tokenizer not loaded")
+        }
+        return Self.encodeKeepingNonverbalTags(text) { tokenizer.encode(text: $0, addSpecialTokens: false) }
     }
 
     private func combineText(refText: String?, text: String) -> String {

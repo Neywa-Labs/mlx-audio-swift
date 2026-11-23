@@ -125,6 +125,36 @@ struct OmniVoiceFactoryTests {
     }
 }
 
+@Suite("OmniVoice Nonverbal Tag Tests")
+struct OmniVoiceNonverbalTagTests {
+
+    @Test func testSplitsTagsFromSurroundingText() {
+        let text = "<|text_start|>An update. [sigh] The fan [laughter].[Sigh] [sniff]<|text_end|>"
+        let parts = OmniVoiceModel.splitNonverbalTags(text).map(String.init)
+        #expect(parts == [
+            "<|text_start|>An update. ", "[sigh]", " The fan ", "[laughter]",
+            ".[Sigh] [sniff]<|text_end|>",
+        ])
+        #expect(parts.joined() == text)
+    }
+
+    @Test func testSplitsAdjacentTagsAndPlainText() {
+        #expect(OmniVoiceModel.splitNonverbalTags("[sigh][laughter]").map(String.init) == ["[sigh]", "[laughter]"])
+        #expect(OmniVoiceModel.splitNonverbalTags("No tags [here].").map(String.init) == ["No tags [here]."])
+        #expect(OmniVoiceModel.splitNonverbalTags("").isEmpty)
+    }
+
+    @Test func testEncodesEachSegmentSeparately() {
+        var calls: [String] = []
+        let ids = OmniVoiceModel.encodeKeepingNonverbalTags("Hi [sigh] there") { segment in
+            calls.append(segment)
+            return [segment.count]
+        }
+        #expect(calls == ["Hi ", "[sigh]", " there"])
+        #expect(ids == [3, 6, 6])
+    }
+}
+
 @Suite("OmniVoice Model Tests", .serialized)
 struct OmniVoiceModelTests {
 
